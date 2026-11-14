@@ -919,6 +919,62 @@ describe("HideCliSource", () => {
     hub.dispose();
   });
 
+  it("triggers an immediate access request via StatusHub.requestAccess() after revocation", async () => {
+    vi.useFakeTimers();
+    const world = new FakeHideWorld();
+    world.seed("key", "revoked");
+    world.panes = [
+      {
+        pane: "w3:p1",
+        agent: {
+          id: "ag-hub-req",
+          name: "kestrel",
+          kind: "claude",
+          state: "working",
+          line: "Resumed polling",
+          pane: "w3:p1",
+        },
+      },
+    ];
+
+    const hub = new StatusHub({
+      initialSettings: { source: "hide", hidePath: "/opt/hide/bin/hide" },
+      sourceFactory: (settings) =>
+        createHideSource(settings, {
+          cliOptions: { exec: world.exec },
+          now: () => Date.now(),
+        }),
+    });
+
+    const snapshots: HideSnapshot[] = [];
+    const unsub = hub.subscribe((s) => snapshots.push(s));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(snapshots.at(-1)?.connection).toEqual({ kind: "revoked" });
+    expect(world.countCommands("access request")).toBe(0);
+
+    // Automatic polls do not open a new access request while revoked
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(snapshots.at(-1)?.connection).toEqual({ kind: "revoked" });
+    expect(world.countCommands("access request")).toBe(0);
+
+    // StatusHub.requestAccess() triggers immediate request (settles stale .key + opens fresh .request)
+    hub.requestAccess();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(snapshots.at(-1)?.connection).toEqual({ kind: "pending" });
+    expect(world.countCommands("access request")).toBe(2);
+    expect(world.calls.at(-1)?.opts.env.HIDE_ACCESS).toBe("streamdeck");
+
+    // Once approved, next >= 3s poll promotes key and reads ps --json
+    world.approve();
+    await vi.advanceTimersByTimeAsync(ACCESS_REQUEST_RETRY_INTERVAL_MS);
+    expect(snapshots.at(-1)?.connection).toEqual({ kind: "connected" });
+    expect(snapshots.at(-1)?.agents.map((a) => a.name)).toEqual(["kestrel"]);
+
+    unsub();
+    hub.dispose();
+  });
+
   it("defaultHideExec runs without a shell, reports timed out message, captures non-zero exit codes, honors AbortSignal, and rejects ENOENT", async () => {
     const okRes = await defaultHideExec(
       process.execPath,
