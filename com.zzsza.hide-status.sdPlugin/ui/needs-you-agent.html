@@ -65,5 +65,35 @@
         </select>
       </div>
     </main>
+    <script>
+      (function () {
+        var slotInput = document.getElementById("slot");
+        if (!slotInput) return;
+
+        function isValidSlot(raw) {
+          var trimmed = String(raw).trim();
+          if (trimmed === "") return true;
+          var parsed = Number(trimmed);
+          return Number.isInteger(parsed) && parsed >= 1 && parsed <= 20;
+        }
+
+        function guardSlotInput() {
+          if (isValidSlot(slotInput.value)) {
+            return;
+          }
+          var saved =
+            window.hidePropertyInspector &&
+            window.hidePropertyInspector.getActionSettings().slot;
+          var fallback =
+            typeof saved === "number" && Number.isInteger(saved) && saved >= 1 && saved <= 20
+              ? String(saved)
+              : slotInput.getAttribute("data-default") || "1";
+          slotInput.value = fallback;
+        }
+
+        slotInput.addEventListener("change", guardSlotInput, true);
+        slotInput.addEventListener("blur", guardSlotInput, true);
+      })();
+    </script>
   </body>
 </html>

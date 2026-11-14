@@ -11,6 +11,9 @@ const NAME_LINE_HEIGHT = 20;
 const LINE_FONT_SIZE = 13;
 const LINE_LINE_HEIGHT = 18;
 const DEFAULT_ELLIPSIS = "…";
+export const MIN_AGENT_SLOT = 1;
+export const MAX_AGENT_SLOT = 20;
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 export interface AgentKeyRenderOptions {
   slot?: number;
@@ -24,22 +27,26 @@ export interface WrapTextOptions {
   ellipsis?: string;
 }
 
+function isValidAgentSlot(value: number): boolean {
+  return Number.isInteger(value) && value >= MIN_AGENT_SLOT && value <= MAX_AGENT_SLOT;
+}
+
 /**
- * Normalizes a 1-based Needs You slot index. Missing or invalid values fall back to 1.
+ * Normalizes a 1-based Needs You slot index (1..20). Missing or out-of-range values fall back to 1.
  */
 export function normalizeAgentSlot(slot: unknown): number {
   if (typeof slot === "number") {
-    return Number.isInteger(slot) && slot >= 1 ? slot : 1;
+    return isValidAgentSlot(slot) ? slot : MIN_AGENT_SLOT;
   }
   if (typeof slot === "string") {
     const trimmed = slot.trim();
     if (trimmed.length === 0) {
-      return 1;
+      return MIN_AGENT_SLOT;
     }
     const parsed = Number(trimmed);
-    return Number.isInteger(parsed) && parsed >= 1 ? parsed : 1;
+    return isValidAgentSlot(parsed) ? parsed : MIN_AGENT_SLOT;
   }
-  return 1;
+  return MIN_AGENT_SLOT;
 }
 
 /**
@@ -64,39 +71,65 @@ function isWideGlyph(codePoint: number): boolean {
 }
 
 /**
- * Estimates rendered pixel width of a single character in sans-serif SVG text.
+ * Splits a string into user-perceived grapheme clusters using Intl.Segmenter.
  */
-export function estimateCharWidth(char: string, fontSize: number, bold = false): number {
+export function splitGraphemes(text: string): string[] {
+  return Array.from(GRAPHEME_SEGMENTER.segment(text), (part) => part.segment);
+}
+
+function isEmojiGrapheme(grapheme: string, firstCodePoint: number): boolean {
+  if (firstCodePoint > 0xffff) {
+    return true;
+  }
+  if (
+    grapheme.includes("\u200d") ||
+    grapheme.includes("\ufe0f") ||
+    grapheme.includes("\u20e3")
+  ) {
+    return true;
+  }
+  return firstCodePoint >= 0x1f1e6 && firstCodePoint <= 0x1f1ff;
+}
+
+/**
+ * Estimates rendered pixel width of a single grapheme cluster in sans-serif SVG text.
+ */
+export function estimateCharWidth(grapheme: string, fontSize: number, bold = false): number {
   const weightFactor = bold ? 1.04 : 1;
-  if (char === " ") {
+  if (grapheme === " ") {
     return fontSize * 0.3;
   }
-  if (char === "…") {
+  if (grapheme === "…") {
     return fontSize * 0.95 * weightFactor;
   }
-  if ("ilI.,:;!'|`".includes(char)) {
+  const firstCodePoint = grapheme.codePointAt(0) ?? 0;
+  if (isEmojiGrapheme(grapheme, firstCodePoint)) {
+    return fontSize * 1.25;
+  }
+  const baseChar = Array.from(grapheme)[0] ?? grapheme;
+  if ("ilI.,:;!'|`".includes(baseChar)) {
     return fontSize * 0.38 * weightFactor;
   }
-  if ("fjrt-/()[]{}".includes(char)) {
+  if ("fjrt-/()[]{}".includes(baseChar)) {
     return fontSize * 0.46 * weightFactor;
   }
-  if (char === "W" || char === "M") {
+  if (baseChar === "W" || baseChar === "M") {
     return fontSize * 0.95 * weightFactor;
   }
-  if (char === "w" || char === "m") {
+  if (baseChar === "w" || baseChar === "m") {
     return fontSize * 0.82 * weightFactor;
   }
-  const codePoint = char.codePointAt(0) ?? 0;
-  if (codePoint > 0xffff) {
-    return fontSize * 1.15;
-  }
-  if (isWideGlyph(codePoint)) {
+  if (isWideGlyph(firstCodePoint)) {
     return fontSize * 1.0 * weightFactor;
   }
-  if (codePoint >= 0x41 && codePoint <= 0x5a) {
+  if (firstCodePoint >= 0x41 && firstCodePoint <= 0x5a) {
     return fontSize * 0.74 * weightFactor;
   }
-  if ((codePoint >= 0x61 && codePoint <= 0x7a) || (codePoint >= 0x30 && codePoint <= 0x39) || char === "_") {
+  if (
+    (firstCodePoint >= 0x61 && firstCodePoint <= 0x7a) ||
+    (firstCodePoint >= 0x30 && firstCodePoint <= 0x39) ||
+    baseChar === "_"
+  ) {
     return fontSize * 0.6 * weightFactor;
   }
   return fontSize * 0.7 * weightFactor;
@@ -107,8 +140,8 @@ export function estimateCharWidth(char: string, fontSize: number, bold = false):
  */
 export function estimateTextWidth(text: string, fontSize: number, bold = false): number {
   let total = 0;
-  for (const ch of Array.from(text)) {
-    total += estimateCharWidth(ch, fontSize, bold);
+  for (const grapheme of splitGraphemes(text)) {
+    total += estimateCharWidth(grapheme, fontSize, bold);
   }
   return total;
 }
@@ -128,19 +161,19 @@ function truncateLineToWidth(
     return "";
   }
 
-  const chars = Array.from(text);
+  const graphemes = splitGraphemes(text);
   let width = 0;
   let endIndex = 0;
-  for (let i = 0; i < chars.length; i += 1) {
-    const chWidth = estimateCharWidth(chars[i]!, fontSize, bold);
-    if (width + chWidth + ellipsisWidth > maxWidth) {
+  for (let i = 0; i < graphemes.length; i += 1) {
+    const gWidth = estimateCharWidth(graphemes[i]!, fontSize, bold);
+    if (width + gWidth + ellipsisWidth > maxWidth) {
       break;
     }
-    width += chWidth;
+    width += gWidth;
     endIndex = i + 1;
   }
 
-  const prefix = chars.slice(0, endIndex).join("").trimEnd();
+  const prefix = graphemes.slice(0, endIndex).join("").trimEnd();
   return `${prefix}${ellipsis}`;
 }
 
@@ -150,31 +183,31 @@ function splitWordAtWidth(
   fontSize: number,
   bold: boolean,
 ): [string, string] {
-  const chars = Array.from(word);
+  const graphemes = splitGraphemes(word);
   let width = 0;
   let fitCount = 0;
-  for (let i = 0; i < chars.length; i += 1) {
-    const chWidth = estimateCharWidth(chars[i]!, fontSize, bold);
-    if (fitCount > 0 && width + chWidth > maxWidth) {
+  for (let i = 0; i < graphemes.length; i += 1) {
+    const gWidth = estimateCharWidth(graphemes[i]!, fontSize, bold);
+    if (fitCount > 0 && width + gWidth > maxWidth) {
       break;
     }
-    width += chWidth;
+    width += gWidth;
     fitCount = i + 1;
   }
 
   let splitAt = fitCount;
   const minDelimiterPos = Math.ceil(fitCount * 0.4);
   for (let i = fitCount - 1; i >= minDelimiterPos; i -= 1) {
-    const ch = chars[i];
-    if (ch === "-" || ch === "_" || ch === "/") {
-      if (i + 1 < chars.length) {
+    const g = graphemes[i];
+    if (g === "-" || g === "_" || g === "/") {
+      if (i + 1 < graphemes.length) {
         splitAt = i + 1;
       }
       break;
     }
   }
 
-  return [chars.slice(0, splitAt).join(""), chars.slice(splitAt).join("")];
+  return [graphemes.slice(0, splitAt).join(""), graphemes.slice(splitAt).join("")];
 }
 
 /**
