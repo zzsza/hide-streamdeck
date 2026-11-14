@@ -45,9 +45,39 @@ export const FAKE_SCENARIOS: readonly FakeScenarioMeta[] = [
     description: "Waiting for operator approval in Hide.",
   },
   {
+    id: "refused",
+    label: "Refused",
+    description: "Operator refused the access request.",
+  },
+  {
+    id: "revoked",
+    label: "Revoked",
+    description: "Previously granted access was revoked.",
+  },
+  {
+    id: "expired",
+    label: "Expired",
+    description: "Access grant expired.",
+  },
+  {
     id: "hide-unavailable",
     label: "Hide Unavailable",
     description: "Hide application is not running.",
+  },
+  {
+    id: "hide-outdated",
+    label: "Hide Outdated",
+    description: "Installed hide binary lacks the access command.",
+  },
+  {
+    id: "hide-missing",
+    label: "Hide Missing",
+    description: "Configured hide executable path does not exist.",
+  },
+  {
+    id: "error",
+    label: "Error",
+    description: "Unexpected CLI failure while reading status.",
   },
   {
     id: "cycling",
@@ -222,9 +252,45 @@ export function buildStaticScenarioSnapshot(
         agents: [],
         readAt,
       };
+    case "refused":
+      return {
+        connection: { kind: "refused" },
+        agents: [],
+        readAt,
+      };
+    case "revoked":
+      return {
+        connection: { kind: "revoked" },
+        agents: [],
+        readAt,
+      };
+    case "expired":
+      return {
+        connection: { kind: "expired" },
+        agents: [],
+        readAt,
+      };
     case "hide-unavailable":
       return {
         connection: { kind: "hide_unavailable" },
+        agents: [],
+        readAt,
+      };
+    case "hide-outdated":
+      return {
+        connection: { kind: "hide_outdated" },
+        agents: [],
+        readAt,
+      };
+    case "hide-missing":
+      return {
+        connection: { kind: "hide_missing" },
+        agents: [],
+        readAt,
+      };
+    case "error":
+      return {
+        connection: { kind: "error", message: "Synthetic read failure" },
         agents: [],
         readAt,
       };

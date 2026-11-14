@@ -30,9 +30,37 @@ describe("StatusHub", () => {
     vi.useRealTimers();
   });
 
+  it("waits for the first updateSettings call before creating a source or polling when initialSettings is omitted", async () => {
+    const read = vi.fn(async () => makeSnapshot(Date.now(), "nova"));
+    const sourceFactory = vi.fn(() => ({ read }));
+    const hub = new StatusHub({ sourceFactory });
+
+    expect(hub.isReady()).toBe(false);
+
+    const received: HideSnapshot[] = [];
+    const unsubscribe = hub.subscribe((snap) => received.push(snap));
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_POLL_INTERVAL_MS * 5);
+    expect(sourceFactory).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+    expect(received).toHaveLength(0);
+
+    // First settings arrival starts polling immediately even when values match defaults.
+    hub.updateSettings({});
+    expect(hub.isReady()).toBe(true);
+    expect(sourceFactory).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(received).toHaveLength(1);
+
+    unsubscribe();
+  });
+
   it("does not poll while there are zero subscribers and stops when subscribers drop to zero", async () => {
     const read = vi.fn(async () => makeSnapshot(Date.now()));
     const hub = new StatusHub({
+      initialSettings: { source: "fake" },
       sourceFactory: () => ({ read }),
     });
 
@@ -65,6 +93,7 @@ describe("StatusHub", () => {
       return makeSnapshot(Date.now(), `agent-${callCount}`);
     });
     const hub = new StatusHub({
+      initialSettings: { source: "fake" },
       sourceFactory: () => ({ read }),
     });
 
@@ -80,7 +109,6 @@ describe("StatusHub", () => {
     expect(firstEvents).toHaveLength(1);
     expect(secondEvents).toHaveLength(1);
 
-    // Late subscriber receives the cached snapshot synchronously without triggering an extra read.
     const unsub3 = hub.subscribe((s) => thirdEvents.push(s));
     expect(thirdEvents).toHaveLength(1);
     expect(thirdEvents[0]?.agents[0]?.name).toBe("agent-1");
@@ -94,7 +122,6 @@ describe("StatusHub", () => {
 
     unsub1();
     unsub2();
-    // Still 1 subscriber remaining, polling continues.
     await vi.advanceTimersByTimeAsync(DEFAULT_POLL_INTERVAL_MS);
     expect(read).toHaveBeenCalledTimes(3);
 
@@ -121,26 +148,23 @@ describe("StatusHub", () => {
     );
 
     const hub = new StatusHub({
+      initialSettings: { source: "fake" },
       sourceFactory: () => ({ read }),
     });
 
     const unsub = hub.subscribe(() => {});
     expect(read).toHaveBeenCalledTimes(1);
 
-    // Even if 5 seconds pass while the first read is still running, no second read starts.
     await vi.advanceTimersByTimeAsync(5_000);
     expect(read).toHaveBeenCalledTimes(1);
     expect(maxConcurrentReads).toBe(1);
 
-    // Finish the first read at t = 5000ms.
     resolvers.shift()!(makeSnapshot(Date.now()));
     await Promise.resolve();
 
-    // At 1499ms after completion, next read has not started yet.
     await vi.advanceTimersByTimeAsync(DEFAULT_POLL_INTERVAL_MS - 1);
     expect(read).toHaveBeenCalledTimes(1);
 
-    // At 1500ms after completion, second read starts.
     await vi.advanceTimersByTimeAsync(1);
     expect(read).toHaveBeenCalledTimes(2);
     expect(maxConcurrentReads).toBe(1);
@@ -160,6 +184,7 @@ describe("StatusHub", () => {
     });
 
     const hub = new StatusHub({
+      initialSettings: { source: "fake" },
       sourceFactory: () => ({ read }),
     });
 
@@ -182,26 +207,29 @@ describe("StatusHub", () => {
     unsub();
   });
 
-  it("replaces and disposes the old source when global settings change", async () => {
+  it("immediately polls the new source even if the previous generation read never finishes, and reports dispose errors", async () => {
     const createdSettings: NormalizedGlobalSettings[] = [];
-    const disposedIndices: number[] = [];
+    const reportedErrors: unknown[] = [];
+    let newSourceCalls = 0;
 
     const hub = new StatusHub({
       initialSettings: { source: "hide" },
+      onListenerError: (err) => reportedErrors.push(err),
       sourceFactory: (settings): HideSource => {
-        const idx = createdSettings.length;
         createdSettings.push(settings);
+        if (settings.source === "hide") {
+          return {
+            // Never resolves.
+            read: () => new Promise<HideSnapshot>(() => {}),
+            dispose: () => {
+              throw new Error("dispose failure");
+            },
+          };
+        }
         return {
-          read: async () =>
-            settings.source === "fake"
-              ? makeSnapshot(Date.now(), `fake-${settings.fakeScenario}`)
-              : {
-                  connection: { kind: "not_connected" },
-                  agents: [],
-                  readAt: Date.now(),
-                },
-          dispose: () => {
-            disposedIndices.push(idx);
+          read: async () => {
+            newSourceCalls += 1;
+            return makeSnapshot(Date.now(), `fresh-${newSourceCalls}`);
           },
         };
       },
@@ -209,24 +237,26 @@ describe("StatusHub", () => {
 
     const received: HideSnapshot[] = [];
     const unsub = hub.subscribe((s) => received.push(s));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(received).toHaveLength(0);
 
-    expect(createdSettings).toHaveLength(1);
-    expect(received[0]?.connection).toEqual({ kind: "not_connected" });
-
-    // No-op when settings are unchanged.
-    hub.updateSettings({ source: "hide" });
-    expect(createdSettings).toHaveLength(1);
-    expect(disposedIndices).toEqual([]);
-
-    // Switching to fake disposes source 0 and immediately polls source 1.
+    // Switch settings while generation 1 read is permanently hung.
     hub.updateSettings({ source: "fake", fakeScenario: "needs-you-one" });
-    await vi.advanceTimersByTimeAsync(0);
+    expect(reportedErrors).toHaveLength(1);
+    expect((reportedErrors[0] as Error).message).toBe("dispose failure");
 
-    expect(disposedIndices).toEqual([0]);
-    expect(createdSettings).toHaveLength(2);
-    expect(received.at(-1)?.agents[0]?.name).toBe("fake-needs-you-one");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(newSourceCalls).toBe(1);
+    expect(received).toHaveLength(1);
+    expect(received[0]?.agents[0]?.name).toBe("fresh-1");
+
+    // Subsequent intervals keep polling the new source normally.
+    await vi.advanceTimersByTimeAsync(DEFAULT_POLL_INTERVAL_MS);
+    expect(newSourceCalls).toBe(2);
+    expect(received).toHaveLength(2);
+    expect(received[1]?.agents[0]?.name).toBe("fresh-2");
 
     unsub();
+    hub.dispose();
   });
 });

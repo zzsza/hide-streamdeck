@@ -27,6 +27,13 @@ export interface HideSnapshot {
   readAt: number;
 }
 
+/**
+ * Data source contract for reading Hide status snapshots.
+ *
+ * Implementations must guarantee:
+ * - `read()` finishes within a bounded time limit and never hangs indefinitely.
+ * - `dispose()` aborts any in-flight `read()` and cleans up owned resources.
+ */
 export interface HideSource {
   read(): Promise<HideSnapshot>;
   dispose?(): void;
@@ -41,7 +48,13 @@ export type FakeScenarioId =
   | "needs-you-many"
   | "not-connected"
   | "pending"
+  | "refused"
+  | "revoked"
+  | "expired"
   | "hide-unavailable"
+  | "hide-outdated"
+  | "hide-missing"
+  | "error"
   | "cycling";
 
 export type GlobalSettings = {
@@ -67,7 +80,13 @@ export const FAKE_SCENARIO_IDS: readonly FakeScenarioId[] = [
   "needs-you-many",
   "not-connected",
   "pending",
+  "refused",
+  "revoked",
+  "expired",
   "hide-unavailable",
+  "hide-outdated",
+  "hide-missing",
+  "error",
   "cycling",
 ] as const;
 

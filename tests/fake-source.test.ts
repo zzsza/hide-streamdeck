@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createHideSource,
@@ -6,11 +6,12 @@ import {
   FAKE_SCENARIOS,
   FakeHideSource,
   HideCliSource,
+  type HideExec,
 } from "../src/source/index.js";
 import { summarize } from "../src/state/classify.js";
 
 describe("FakeHideSource", () => {
-  it("supports empty, working-many, needs-you-one, needs-you-many, not-connected, and pending scenarios", async () => {
+  it("supports all agent and connection scenarios", async () => {
     const emptySnap = await new FakeHideSource({ scenario: "empty" }).read();
     expect(emptySnap.connection).toEqual({ kind: "connected" });
     expect(emptySnap.agents).toHaveLength(0);
@@ -30,13 +31,23 @@ describe("FakeHideSource", () => {
     expect(manySummary.needsYou.some((a) => a.name.length >= 25)).toBe(true);
     expect(manySummary.needsYou.some((a) => (a.line ?? "").length >= 60)).toBe(true);
 
-    const disconnectedSnap = await new FakeHideSource({ scenario: "not-connected" }).read();
-    expect(disconnectedSnap.connection).toEqual({ kind: "not_connected" });
-    expect(disconnectedSnap.agents).toHaveLength(0);
+    const connectionScenarios: ReadonlyArray<[string, string]> = [
+      ["not-connected", "not_connected"],
+      ["pending", "pending"],
+      ["refused", "refused"],
+      ["revoked", "revoked"],
+      ["expired", "expired"],
+      ["hide-unavailable", "hide_unavailable"],
+      ["hide-outdated", "hide_outdated"],
+      ["hide-missing", "hide_missing"],
+      ["error", "error"],
+    ];
 
-    const pendingSnap = await new FakeHideSource({ scenario: "pending" }).read();
-    expect(pendingSnap.connection).toEqual({ kind: "pending" });
-    expect(pendingSnap.agents).toHaveLength(0);
+    for (const [scenarioId, expectedKind] of connectionScenarios) {
+      const snap = await new FakeHideSource({ scenario: scenarioId }).read();
+      expect(snap.connection.kind).toBe(expectedKind);
+      expect(snap.agents).toHaveLength(0);
+    }
   });
 
   it("transitions across states over time in the cycling scenario", async () => {
@@ -81,18 +92,27 @@ describe("FakeHideSource", () => {
   });
 
   it("registers metadata for every scenario id", () => {
-    expect(FAKE_SCENARIOS.length).toBeGreaterThanOrEqual(7);
+    expect(FAKE_SCENARIOS.length).toBe(14);
   });
 });
 
 describe("createHideSource", () => {
-  it("defaults to HideCliSource with default hidePath when settings are empty", async () => {
-    const source = createHideSource();
-    expect(source).toBeInstanceOf(HideCliSource);
-    expect((source as HideCliSource).hidePath).toBe(DEFAULT_HIDE_PATH);
+  it("passes hidePath and injected exec to HideCliSource without invoking any binary", () => {
+    const stubExec: HideExec = vi.fn(async () => ({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    }));
 
-    const snapshot = await source.read();
-    expect(snapshot.connection).toEqual({ kind: "error", message: "not implemented" });
+    const source = createHideSource(undefined, {
+      cliOptions: { exec: stubExec },
+    });
+
+    expect(source).toBeInstanceOf(HideCliSource);
+    const cliSource = source as HideCliSource;
+    expect(cliSource.hidePath).toBe(DEFAULT_HIDE_PATH);
+    expect(cliSource.exec).toBe(stubExec);
+    expect(stubExec).not.toHaveBeenCalled();
   });
 
   it("creates FakeHideSource when source is set to fake", async () => {

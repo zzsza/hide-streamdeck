@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   NEEDS_YOU_AGENT_UUID,
@@ -20,7 +20,7 @@ import {
   truncateText,
 } from "../src/render/index.js";
 import { FAKE_SCENARIOS, FakeHideSource } from "../src/source/fake-source.js";
-import { StatusHub } from "../src/state/status-hub.js";
+import { DEFAULT_POLL_INTERVAL_MS, StatusHub } from "../src/state/status-hub.js";
 import { generatePreviewHtml } from "../scripts/preview.js";
 
 function decodeSvgDataUrl(dataUrl: string): string {
@@ -83,9 +83,17 @@ describe("key-svg and placeholder renderers", () => {
 });
 
 describe("actions with StatusHub", () => {
-  it("subscribes on willAppear, updates key images, and unsubscribes on willDisappear", async () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("subscribes on willAppear, skips duplicate SVGs, re-renders on slot change, and unsubscribes on willDisappear", async () => {
     const hub = new StatusHub({
-      initialSettings: { source: "fake", fakeScenario: "needs-you-one" },
+      initialSettings: { source: "fake", fakeScenario: "needs-you-many" },
     });
 
     const workingAction = new WorkingCountAction(hub);
@@ -102,23 +110,37 @@ describe("actions with StatusHub", () => {
 
     expect(hub.getSubscriberCount()).toBe(3);
 
-    // Allow initial async read() in FakeHideSource to resolve.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(k1.setImage).toHaveBeenCalledTimes(1);
     expect(k2.setImage).toHaveBeenCalledTimes(1);
     expect(k3.setImage).toHaveBeenCalledTimes(1);
 
-    expect(decodeSvgDataUrl(k3.setImage.mock.calls[0]?.[0] ?? "")).toContain("Agent #1");
+    const firstAgentImage = k3.setImage.mock.calls[0]?.[0] ?? "";
+    expect(decodeSvgDataUrl(firstAgentImage).startsWith("<svg ")).toBe(true);
 
-    // Updating slot setting re-renders immediately from cached snapshot.
-    const k3Updated = {
+    // Identical snapshot on next poll does not re-send setImage.
+    await vi.advanceTimersByTimeAsync(DEFAULT_POLL_INTERVAL_MS);
+    expect(k1.setImage).toHaveBeenCalledTimes(1);
+    expect(k2.setImage).toHaveBeenCalledTimes(1);
+    expect(k3.setImage).toHaveBeenCalledTimes(1);
+
+    // Receiving the same slot setting also skips redundant setImage.
+    agentAction.onDidReceiveSettings({
+      action: k3.event.action,
+      payload: { settings: { slot: 1 } },
+    } as never);
+    expect(k3.setImage).toHaveBeenCalledTimes(1);
+
+    // Updating slot setting to another agent slot re-renders immediately with a new SVG.
+    agentAction.onDidReceiveSettings({
       action: k3.event.action,
       payload: { settings: { slot: 2 } },
-    };
-    agentAction.onDidReceiveSettings(k3Updated as never);
+    } as never);
     expect(k3.setImage).toHaveBeenCalledTimes(2);
-    expect(decodeSvgDataUrl(k3.setImage.mock.calls[1]?.[0] ?? "")).toContain("Agent #2");
+    const secondAgentImage = k3.setImage.mock.calls[1]?.[0] ?? "";
+    expect(decodeSvgDataUrl(secondAgentImage).startsWith("<svg ")).toBe(true);
+    expect(secondAgentImage).not.toBe(firstAgentImage);
 
     workingAction.onWillDisappear(k1.event as never);
     needsCountAction.onWillDisappear(k2.event as never);
