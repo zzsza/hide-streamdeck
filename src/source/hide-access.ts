@@ -335,8 +335,22 @@ export interface AccessPollResult {
   agents: AgentRow[];
 }
 
+interface RunAccessRequestOptions {
+  bypassThrottle: boolean;
+  allowSecondOnEnded: boolean;
+}
+
+function isEndedRefusalCode(code: string): boolean {
+  return (
+    code === "access_revoked" ||
+    code === "access_refused" ||
+    code === "access_request_expired"
+  );
+}
+
 /**
  * Manages the `hide access status` -> `hide access request` -> `hide ps` connection lifecycle.
+ * New authorization requests are only started explicitly via `requestAccess()`.
  */
 export class HideAccessStateMachine {
   private phase: AccessPhase = "initial";
@@ -353,12 +367,13 @@ export class HideAccessStateMachine {
   ) {}
 
   /**
-   * Marks the next `poll()` to issue an immediate `access request` when currently `revoked` or `refused`.
+   * Marks the next `poll()` to issue an explicit `access request` unless already `connected` or `pending`.
    */
-  retry(): void {
-    if (this.lastReportedKind === "revoked" || this.lastReportedKind === "refused") {
-      this.forceRequestNextRead = true;
+  requestAccess(): void {
+    if (this.lastReportedKind === "connected" || this.lastReportedKind === "pending") {
+      return;
     }
+    this.forceRequestNextRead = true;
   }
 
   async poll(run: RunHideCommand): Promise<AccessPollResult> {
@@ -369,7 +384,12 @@ export class HideAccessStateMachine {
       this.phase = "initial";
       this.haltedState = null;
       this.lastRequestResult = null;
-      return this.finish(await this.runAccessRequest(run, ctx, true));
+      return this.finish(
+        await this.runAccessRequest(run, ctx, {
+          bypassThrottle: true,
+          allowSecondOnEnded: true,
+        }),
+      );
     }
 
     if (this.phase === "connected") {
@@ -380,9 +400,7 @@ export class HideAccessStateMachine {
       return this.finish(await this.pollPending(run, ctx));
     }
 
-    return this.finish(
-      await this.checkAccessStatus(run, ctx, this.phase !== "halted"),
-    );
+    return this.finish(await this.checkAccessStatus(run, ctx));
   }
 
   private finish(result: AccessPollResult): AccessPollResult {
@@ -403,10 +421,6 @@ export class HideAccessStateMachine {
     this.hasCompletedPs = false;
   }
 
-  private shouldRecoverImmediately(code: string): boolean {
-    return code === "access_request_expired" || code === "access_key_unreadable";
-  }
-
   private isThrottleActive(): boolean {
     return (
       this.lastRequestAt !== null &&
@@ -414,32 +428,25 @@ export class HideAccessStateMachine {
     );
   }
 
-  private async handleNotConnected(
-    run: RunHideCommand,
-    ctx: ReadContext,
-    requestOnNotConnected: boolean,
-  ): Promise<AccessPollResult> {
-    if (!requestOnNotConnected) {
+  private handleNotConnected(): AccessPollResult {
+    if (this.phase === "halted" && this.haltedState !== null) {
       return {
-        connection: this.haltedState ?? { kind: "not_connected" },
+        connection: this.haltedState,
         agents: [],
       };
     }
 
-    if (this.isThrottleActive()) {
-      return {
-        connection: this.lastRequestResult ?? { kind: "not_connected" },
-        agents: [],
-      };
-    }
-
-    return this.runAccessRequest(run, ctx, false);
+    this.phase = "initial";
+    this.haltedState = null;
+    return {
+      connection: { kind: "not_connected" },
+      agents: [],
+    };
   }
 
   private async checkAccessStatus(
     run: RunHideCommand,
     ctx: ReadContext,
-    requestOnNotConnected: boolean,
   ): Promise<AccessPollResult> {
     const statusOutcome = await this.execEnvelope(run, ACCESS_STATUS_ARGS);
     if ("connection" in statusOutcome) {
@@ -461,18 +468,15 @@ export class HideAccessStateMachine {
         this.enterPending();
         return { connection: mapped, agents: [] };
       }
-      if (mapped.kind === "revoked" || mapped.kind === "refused") {
+      if (mapped.kind === "revoked" || mapped.kind === "refused" || mapped.kind === "expired") {
         this.enterHalted(mapped);
         return { connection: mapped, agents: [] };
       }
-      if (this.shouldRecoverImmediately(envelope.code) && !ctx.requestRan) {
-        this.phase = "initial";
-        this.haltedState = null;
-        return this.runAccessRequest(run, ctx, true);
-      }
       if (mapped.kind === "not_connected") {
-        return this.handleNotConnected(run, ctx, requestOnNotConnected);
+        return this.handleNotConnected();
       }
+      this.phase = "initial";
+      this.haltedState = null;
       return { connection: mapped, agents: [] };
     }
 
@@ -485,7 +489,7 @@ export class HideAccessStateMachine {
       return this.pollPs(run, ctx);
     }
     if (stateStr === "not_connected") {
-      return this.handleNotConnected(run, ctx, requestOnNotConnected);
+      return this.handleNotConnected();
     }
     if (stateStr === "pending") {
       this.enterPending();
@@ -509,13 +513,16 @@ export class HideAccessStateMachine {
       return { connection: { kind: "pending" }, agents: [] };
     }
 
-    return this.runAccessRequest(run, ctx, false);
+    return this.runAccessRequest(run, ctx, {
+      bypassThrottle: false,
+      allowSecondOnEnded: false,
+    });
   }
 
   private async runAccessRequest(
     run: RunHideCommand,
     ctx: ReadContext,
-    bypassThrottle: boolean,
+    options: RunAccessRequestOptions,
   ): Promise<AccessPollResult> {
     if (ctx.requestRan) {
       this.phase = "initial";
@@ -527,7 +534,7 @@ export class HideAccessStateMachine {
         agents: [],
       };
     }
-    if (!bypassThrottle && this.isThrottleActive()) {
+    if (!options.bypassThrottle && this.isThrottleActive()) {
       return {
         connection: this.lastRequestResult ?? { kind: "pending" },
         agents: [],
@@ -536,67 +543,88 @@ export class HideAccessStateMachine {
 
     ctx.requestRan = true;
     this.lastRequestAt = this.now();
-    const requestOutcome = await this.execEnvelope(run, ACCESS_REQUEST_ARGS);
-    if ("connection" in requestOutcome) {
-      this.phase = "initial";
-      this.lastRequestResult = requestOutcome.connection;
-      return { connection: requestOutcome.connection, agents: [] };
-    }
 
-    const { envelope } = requestOutcome;
-    if (envelope.kind === "outdated") {
-      this.phase = "initial";
-      this.lastRequestResult = { kind: "hide_outdated" };
-      return { connection: { kind: "hide_outdated" }, agents: [] };
-    }
-    if (envelope.kind === "invalid") {
-      const state: ConnectionState = { kind: "error", message: envelope.message };
-      this.phase = "initial";
-      this.lastRequestResult = state;
-      return { connection: state, agents: [] };
-    }
-    if (envelope.kind === "refusal") {
-      const mapped = mapRefusalCodeToConnectionState(envelope.code, envelope.message);
-      this.lastRequestResult = mapped;
-      if (mapped.kind === "pending") {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const requestOutcome = await this.execEnvelope(run, ACCESS_REQUEST_ARGS);
+      if ("connection" in requestOutcome) {
+        this.phase = "initial";
+        this.lastRequestResult = requestOutcome.connection;
+        return { connection: requestOutcome.connection, agents: [] };
+      }
+
+      const { envelope } = requestOutcome;
+      if (envelope.kind === "outdated") {
+        this.phase = "initial";
+        this.lastRequestResult = { kind: "hide_outdated" };
+        return { connection: { kind: "hide_outdated" }, agents: [] };
+      }
+      if (envelope.kind === "invalid") {
+        const state: ConnectionState = { kind: "error", message: envelope.message };
+        this.phase = "initial";
+        this.lastRequestResult = state;
+        return { connection: state, agents: [] };
+      }
+      if (envelope.kind === "refusal") {
+        if (
+          attempt === 0 &&
+          options.allowSecondOnEnded &&
+          isEndedRefusalCode(envelope.code)
+        ) {
+          // `hide access request` only settles and removes a stale key/request file on the first
+          // ended refusal; run once more in this same read to open a new request.
+          continue;
+        }
+        const mapped = mapRefusalCodeToConnectionState(envelope.code, envelope.message);
+        this.lastRequestResult = mapped;
+        if (mapped.kind === "pending") {
+          this.phase = "pending";
+          this.haltedState = null;
+        } else if (
+          mapped.kind === "revoked" ||
+          mapped.kind === "refused" ||
+          mapped.kind === "expired"
+        ) {
+          this.enterHalted(mapped);
+        } else {
+          this.phase = "initial";
+          this.haltedState = null;
+        }
+        return { connection: mapped, agents: [] };
+      }
+
+      const stateStr = isRecord(envelope.value) ? envelope.value.state : undefined;
+      if (stateStr === "pending") {
         this.phase = "pending";
         this.haltedState = null;
-      } else if (mapped.kind === "revoked" || mapped.kind === "refused") {
-        this.enterHalted(mapped);
-      } else {
-        this.phase = "initial";
-        this.haltedState = null;
+        this.lastRequestResult = { kind: "pending" };
+        return { connection: { kind: "pending" }, agents: [] };
       }
-      return { connection: mapped, agents: [] };
-    }
+      if (stateStr === "connected") {
+        this.phase = "connected";
+        this.haltedState = null;
+        this.lastRequestResult = null;
+        this.hasCompletedPs = false;
+        return this.pollPs(run, ctx);
+      }
+      if (stateStr === "not_connected") {
+        this.phase = "initial";
+        this.lastRequestResult = { kind: "not_connected" };
+        return { connection: { kind: "not_connected" }, agents: [] };
+      }
 
-    const stateStr = isRecord(envelope.value) ? envelope.value.state : undefined;
-    if (stateStr === "pending") {
-      this.phase = "pending";
-      this.haltedState = null;
-      this.lastRequestResult = { kind: "pending" };
-      return { connection: { kind: "pending" }, agents: [] };
-    }
-    if (stateStr === "connected") {
-      this.phase = "connected";
-      this.haltedState = null;
-      this.lastRequestResult = null;
-      this.hasCompletedPs = false;
-      return this.pollPs(run, ctx);
-    }
-    if (stateStr === "not_connected") {
+      const unexpected: ConnectionState = {
+        kind: "error",
+        message: `Unexpected access request state: ${String(stateStr)}`,
+      };
       this.phase = "initial";
-      this.lastRequestResult = { kind: "not_connected" };
-      return { connection: { kind: "not_connected" }, agents: [] };
+      this.lastRequestResult = unexpected;
+      return { connection: unexpected, agents: [] };
     }
 
-    const unexpected: ConnectionState = {
-      kind: "error",
-      message: `Unexpected access request state: ${String(stateStr)}`,
+    return {
+      connection: { kind: "error", message: "Unreachable access request state" },
+      agents: [],
     };
-    this.phase = "initial";
-    this.lastRequestResult = unexpected;
-    return { connection: unexpected, agents: [] };
   }
 
   private async pollPs(
@@ -634,7 +662,7 @@ export class HideAccessStateMachine {
     }
     if (envelope.kind === "refusal") {
       const mapped = mapRefusalCodeToConnectionState(envelope.code, envelope.message);
-      if (mapped.kind === "revoked" || mapped.kind === "refused") {
+      if (mapped.kind === "revoked" || mapped.kind === "refused" || mapped.kind === "expired") {
         this.enterHalted(mapped);
         return { connection: mapped, agents: [] };
       }
@@ -643,13 +671,13 @@ export class HideAccessStateMachine {
       const hadCompletedPs = this.hasCompletedPs;
       this.hasCompletedPs = false;
 
-      if (this.shouldRecoverImmediately(envelope.code) && !ctx.requestRan) {
-        return this.runAccessRequest(run, ctx, true);
-      }
       if (mapped.kind === "not_connected" && !hadCompletedPs && !ctx.requestRan) {
         // If `.request` was approved while offline, `access status` returns `connected`
         // before `access request` promotes `.request` to `.key` for `ps`.
-        return this.runAccessRequest(run, ctx, true);
+        return this.runAccessRequest(run, ctx, {
+          bypassThrottle: true,
+          allowSecondOnEnded: false,
+        });
       }
 
       return { connection: mapped, agents: [] };

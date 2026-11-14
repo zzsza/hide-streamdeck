@@ -124,6 +124,174 @@ async function waitForFileContent(filePath: string, timeoutMs = 3_000): Promise<
   throw new Error(`Timed out waiting for file ${filePath}`);
 }
 
+async function waitForPidExit(pid: number, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for process ${pid} to exit`);
+}
+
+type CoreStanding = "pending" | "approved" | "refused" | "revoked" | "dropped";
+type FakeAgentEntry = Parameters<typeof makeFakePsPayload>[0][number];
+
+/**
+ * Stateful model of `hided/src/access_cli.rs` + `ps_cli.rs` rules:
+ * - `access status` inspects `keyFile` without deleting ended files.
+ * - `access request` runs `settle()` when a key file exists: an ended file is deleted before
+ *   returning its ended refusal, and a fresh request is only opened on the subsequent call.
+ * - `access request` removes a damaged (`unreadable`) key file and immediately issues a new request.
+ */
+class FakeHideWorld {
+  running = true;
+  keyFile:
+    | null
+    | { kept: "request" | "key"; id: string }
+    | { kept: "unreadable" } = null;
+  core = new Map<string, CoreStanding>();
+  panes: FakeAgentEntry[] = [];
+  calls: RecordedCall[] = [];
+  private seq = 0;
+  private activeId: string | null = null;
+
+  seed(
+    kept: "request" | "key" | "unreadable",
+    standing?: CoreStanding,
+    id = "seeded-1",
+  ): string {
+    if (kept === "unreadable") {
+      this.keyFile = { kept: "unreadable" };
+      this.activeId = null;
+      return id;
+    }
+    this.keyFile = { kept, id };
+    this.activeId = id;
+    if (standing && standing !== "dropped") {
+      this.core.set(id, standing);
+    } else {
+      this.core.delete(id);
+    }
+    return id;
+  }
+
+  approve(id = this.activeId): void {
+    if (id) this.core.set(id, "approved");
+  }
+
+  refuse(id = this.activeId): void {
+    if (id) this.core.set(id, "refused");
+  }
+
+  revoke(id = this.activeId): void {
+    if (id) this.core.set(id, "revoked");
+  }
+
+  restartDaemon(): void {
+    this.core.clear();
+    this.running = true;
+  }
+
+  countCommands(prefix: string): number {
+    return this.calls.filter((c) => c.args.join(" ").startsWith(prefix)).length;
+  }
+
+  private standing(id: string): CoreStanding {
+    return this.core.get(id) ?? "dropped";
+  }
+
+  private endedCode(standing: CoreStanding, kept: "request" | "key"): string {
+    if (standing === "refused") return "access_refused";
+    if (standing === "revoked") return "access_revoked";
+    return kept === "request" ? "access_request_expired" : "access_revoked";
+  }
+
+  private status(): HideExecResult {
+    if (!this.keyFile) {
+      return refusalJson("access_not_connected", "No access key for streamdeck");
+    }
+    if (this.keyFile.kept === "unreadable") {
+      return refusalJson("access_key_unreadable", "Key file cannot be read");
+    }
+    if (!this.running) {
+      return refusalJson("access_unavailable", "Hide is not running");
+    }
+    const s = this.standing(this.keyFile.id);
+    if (s === "pending") {
+      return okJson({ state: "pending", name: "streamdeck" });
+    }
+    if (s === "approved") {
+      return okJson({ state: "connected", name: "streamdeck", level: "view" });
+    }
+    return refusalJson(this.endedCode(s, this.keyFile.kept));
+  }
+
+  private request(): HideExecResult {
+    if (this.keyFile?.kept === "unreadable") {
+      // access_cli.rs removes damaged key files before creating a fresh request.
+      this.keyFile = null;
+    }
+    if (!this.keyFile) {
+      if (!this.running) {
+        return refusalJson("access_unavailable", "Start Hide on this machine");
+      }
+      const id = `req-${++this.seq}`;
+      this.activeId = id;
+      this.keyFile = { kept: "request", id };
+      this.core.set(id, "pending");
+      return okJson({ state: "pending", id, name: "streamdeck" });
+    }
+    if (!this.running) {
+      return refusalJson("access_unavailable", "Start Hide on this machine");
+    }
+    const s = this.standing(this.keyFile.id);
+    if (s === "pending" && this.keyFile.kept === "request") {
+      return okJson({ state: "pending", id: this.keyFile.id, name: "streamdeck" });
+    }
+    if (s === "approved") {
+      this.keyFile = { kept: "key", id: this.keyFile.id };
+      return okJson({ state: "connected", id: this.keyFile.id, level: "view" });
+    }
+    const ended = this.endedCode(s, this.keyFile.kept);
+    this.keyFile = null;
+    return refusalJson(ended);
+  }
+
+  private ps(): HideExecResult {
+    if (!this.keyFile) {
+      return refusalJson("access_not_connected", "No access key for streamdeck");
+    }
+    if (this.keyFile.kept === "unreadable") {
+      return refusalJson("access_key_unreadable", "Key file cannot be read");
+    }
+    if (this.keyFile.kept !== "key") {
+      return refusalJson("access_not_connected", "Promote pending request first");
+    }
+    if (!this.running) {
+      return refusalJson("access_unavailable", "Hide is not running");
+    }
+    const s = this.standing(this.keyFile.id);
+    if (s === "approved") {
+      return okJson(makeFakePsPayload(this.panes));
+    }
+    if (s === "pending") {
+      return refusalJson("access_pending", "Approval pending");
+    }
+    return refusalJson(this.endedCode(s, "key"));
+  }
+
+  readonly exec: HideExec = vi.fn(async (file, args, opts) => {
+    this.calls.push({ file, args: [...args], opts });
+    const cmd = args.join(" ");
+    if (cmd === "access status --json") return this.status();
+    if (cmd === "access request --name streamdeck --json") return this.request();
+    if (cmd === "ps --json") return this.ps();
+    throw new Error(`Unexpected command: ${cmd}`);
+  });
+}
+
 describe("HideCliSource", () => {
   beforeEach(() => {
     vi.stubEnv("EXISTING_TEST_VAR", "preserved-value");
@@ -134,73 +302,61 @@ describe("HideCliSource", () => {
     vi.useRealTimers();
   });
 
-  it("runs access status -> request (throttled to >= 3s) -> ps --json with HIDE_ACCESS=streamdeck", async () => {
+  it("stays not_connected without auto-requesting, connects on requestAccess() -> pending (3s throttle) -> approved -> ps --json", async () => {
     let clock = 10_000;
-    let requestAttempt = 0;
-    const calls: RecordedCall[] = [];
-
-    const fakeExec: HideExec = vi.fn(async (file, args, opts) => {
-      calls.push({ file, args: [...args], opts });
-      const key = args.join(" ");
-      if (key === "access status --json") {
-        return refusalJson(
-          "access_not_connected",
-          "Run hide access request --name streamdeck first",
-        );
-      }
-      if (key === "access request --name streamdeck --json") {
-        requestAttempt += 1;
-        if (requestAttempt < 2) {
-          return okJson({ state: "pending", id: "req-1" });
-        }
-        return okJson({ state: "connected", id: "conn-1", level: "view" });
-      }
-      if (key === "ps --json") {
-        return okJson(
-          makeFakePsPayload([
-            {
-              pane: "w1:p1",
-              agent: {
-                id: "ag-101",
-                name: "falcon",
-                kind: "claude",
-                state: "turn",
-                line: "Approve build step",
-                pane: "w1:p1",
-              },
-            },
-          ]),
-        );
-      }
-      throw new Error(`Unexpected command: ${key}`);
-    });
+    const world = new FakeHideWorld();
+    world.panes = [
+      {
+        pane: "w1:p1",
+        agent: {
+          id: "ag-101",
+          name: "falcon",
+          kind: "claude",
+          state: "turn",
+          line: "Approve build step",
+          pane: "w1:p1",
+        },
+      },
+    ];
 
     const source = new HideCliSource({
       hidePath: "/custom/bin/hide",
-      exec: fakeExec,
+      exec: world.exec,
       now: () => clock,
     });
 
-    // 1st read: status (access_not_connected) -> request (pending)
+    // Automatic polling only checks status and never opens a new request
     const snap1 = await source.read();
-    expect(snap1.connection).toEqual({ kind: "pending" });
+    expect(snap1.connection).toEqual({ kind: "not_connected" });
     expect(snap1.agents).toEqual([]);
-    expect(calls.map((c) => c.args)).toEqual([
-      ["access", "status", "--json"],
+    clock += 1_500;
+    const snap2 = await source.read();
+    expect(snap2.connection).toEqual({ kind: "not_connected" });
+    expect(world.countCommands("access request")).toBe(0);
+
+    // User clicks connect -> requestAccess() -> pending
+    source.requestAccess();
+    const snap3 = await source.read();
+    expect(snap3.connection).toEqual({ kind: "pending" });
+    expect(world.keyFile?.kept).toBe("request");
+    expect(world.calls.slice(2).map((c) => c.args)).toEqual([
       ["access", "request", "--name", "streamdeck", "--json"],
     ]);
 
-    // 2nd read at +1500ms: throttled (< 3000ms), should not call exec
+    // requestAccess() while pending is ignored; polling at +1500ms is throttled (< 3000ms)
+    source.requestAccess();
     clock += 1_500;
-    const snap2 = await source.read();
-    expect(snap2.connection).toEqual({ kind: "pending" });
-    expect(calls).toHaveLength(2);
+    const callCountBeforeThrottle = world.calls.length;
+    expect((await source.read()).connection).toEqual({ kind: "pending" });
+    expect(world.calls).toHaveLength(callCountBeforeThrottle);
 
-    // 3rd read at +3000ms: retries request -> connected -> immediately runs ps --json
+    // Operator approves; after >= 3000ms, settle request exchanges for key and polls ps --json
+    world.approve();
     clock += ACCESS_REQUEST_RETRY_INTERVAL_MS - 1_500;
-    const snap3 = await source.read();
-    expect(snap3.connection).toEqual({ kind: "connected" });
-    expect(snap3.agents).toEqual([
+    const snap5 = await source.read();
+    expect(snap5.connection).toEqual({ kind: "connected" });
+    expect(world.keyFile?.kept).toBe("key");
+    expect(snap5.agents).toEqual([
       {
         id: "ag-101",
         name: "falcon",
@@ -210,55 +366,36 @@ describe("HideCliSource", () => {
         pane: "w1:p1",
       },
     ]);
-    expect(calls.slice(2).map((c) => c.args)).toEqual([
+    expect(world.calls.slice(callCountBeforeThrottle).map((c) => c.args)).toEqual([
       ["access", "request", "--name", "streamdeck", "--json"],
       ["ps", "--json"],
     ]);
 
-    // 4th read when already connected: goes straight to ps --json
+    // Subsequent read while connected runs ps --json directly; requestAccess() is ignored
+    source.requestAccess();
     clock += 1_500;
-    const snap4 = await source.read();
-    expect(snap4.connection).toEqual({ kind: "connected" });
-    expect(calls.slice(4).map((c) => c.args)).toEqual([["ps", "--json"]]);
+    const callsBeforeConnectedRead = world.calls.length;
+    expect((await source.read()).connection).toEqual({ kind: "connected" });
+    expect(world.calls.slice(callsBeforeConnectedRead).map((c) => c.args)).toEqual([
+      ["ps", "--json"],
+    ]);
 
-    for (const call of calls) {
+    for (const call of world.calls) {
       expect(call.file).toBe("/custom/bin/hide");
       expect(call.opts.env.HIDE_ACCESS).toBe("streamdeck");
       expect(call.opts.env.EXISTING_TEST_VAR).toBe("preserved-value");
     }
   });
 
-  it("handles already-connected status on first read, promotes .request on access_not_connected, and caps mutual recursion", async () => {
-    const calls: string[] = [];
-    let psAttempts = 0;
+  it("promotes .request approved while offline and caps mutual ps/request recursion", async () => {
+    const world = new FakeHideWorld();
+    world.seed("request", "approved", "offline-approved");
 
-    const fakeExec: HideExec = vi.fn(async (_file, args) => {
-      const cmd = args.join(" ");
-      calls.push(cmd);
-      if (cmd === "access status --json") {
-        return okJson({ state: "connected", name: "streamdeck", level: "view" });
-      }
-      if (cmd === "ps --json") {
-        psAttempts += 1;
-        if (psAttempts === 1) {
-          return refusalJson(
-            "access_not_connected",
-            "Run hide access request --name streamdeck first",
-          );
-        }
-        return okJson(makeFakePsPayload([]));
-      }
-      if (cmd === "access request --name streamdeck --json") {
-        return okJson({ state: "connected", id: "conn-2", level: "view" });
-      }
-      throw new Error(`Unexpected command: ${cmd}`);
-    });
-
-    const source = new HideCliSource({ exec: fakeExec, now: () => 1_000 });
+    const source = new HideCliSource({ exec: world.exec, now: () => 1_000 });
     const snap = await source.read();
     expect(snap.connection).toEqual({ kind: "connected" });
-    expect(snap.agents).toEqual([]);
-    expect(calls).toEqual([
+    expect(world.keyFile?.kept).toBe("key");
+    expect(world.calls.map((c) => c.args.join(" "))).toEqual([
       "access status --json",
       "ps --json",
       "access request --name streamdeck --json",
@@ -290,282 +427,155 @@ describe("HideCliSource", () => {
     ]);
   });
 
-  it("path 1: keeps revoked across polls and restarts after ps access_revoked, then re-requests immediately on retry()", async () => {
+  it("keeps revoked across polls and restarts, then re-requests to pending on a single requestAccess()", async () => {
     let clock = 5_000;
-    let revokedOnServer = true;
-    let requestApproved = false;
-    const calls1: string[] = [];
+    const world = new FakeHideWorld();
+    const source = new HideCliSource({ exec: world.exec, now: () => clock });
 
-    const makeExec = (record: string[]): HideExec =>
-      vi.fn(async (_file, args) => {
-        const cmd = args.join(" ");
-        record.push(cmd);
-        if (cmd === "access status --json") {
-          return revokedOnServer
-            ? refusalJson("access_revoked", "The operator disconnected this tool")
-            : okJson({ state: "pending" });
-        }
-        if (cmd === "ps --json") {
-          if (revokedOnServer && !requestApproved) {
-            return refusalJson("access_revoked", "The operator disconnected this tool");
-          }
-          return okJson(
-            makeFakePsPayload([
-              {
-                pane: "w1:p1",
-                agent: {
-                  id: "ag-1",
-                  name: "robin",
-                  kind: "codex",
-                  state: "going",
-                  line: "Running checks",
-                  pane: "w1:p1",
-                },
-              },
-            ]),
-          );
-        }
-        if (cmd === "access request --name streamdeck --json") {
-          revokedOnServer = false;
-          return okJson({ state: "pending" });
-        }
-        throw new Error(`Unexpected command: ${cmd}`);
-      });
+    // Connect first
+    await source.read();
+    source.requestAccess();
+    await source.read();
+    world.approve();
+    clock += ACCESS_REQUEST_RETRY_INTERVAL_MS;
+    expect((await source.read()).connection).toEqual({ kind: "connected" });
 
-    const exec1 = makeExec(calls1);
-    const source1 = new HideCliSource({ exec: exec1, now: () => clock });
+    // Operator disconnects -> ps returns access_revoked (.key stays on disk)
+    world.revoke();
+    expect((await source.read()).connection).toEqual({ kind: "revoked" });
+    expect(world.keyFile?.kept).toBe("key");
 
-    // Start connected by mocking initial status -> connected
-    const firstCalls: string[] = [];
-    let isConnected = true;
-    const connectedThenRevokedExec: HideExec = vi.fn(async (_file, args) => {
-      const cmd = args.join(" ");
-      firstCalls.push(cmd);
-      if (cmd === "access status --json") {
-        return isConnected
-          ? okJson({ state: "connected" })
-          : refusalJson("access_revoked", "The operator disconnected this tool");
-      }
-      if (cmd === "ps --json") {
-        if (isConnected) {
-          return okJson(makeFakePsPayload([]));
-        }
-        return refusalJson("access_revoked", "The operator disconnected this tool");
-      }
-      if (cmd === "access request --name streamdeck --json") {
-        return okJson({ state: "pending" });
-      }
-      throw new Error(`Unexpected command: ${cmd}`);
-    });
-
-    const activeSource = new HideCliSource({
-      exec: connectedThenRevokedExec,
-      now: () => clock,
-    });
-    expect((await activeSource.read()).connection).toEqual({ kind: "connected" });
-
-    // Operator disconnects -> ps returns access_revoked
-    isConnected = false;
-    const revokedSnap = await activeSource.read();
-    expect(revokedSnap.connection).toEqual({ kind: "revoked" });
-    expect(revokedSnap.agents).toEqual([]);
-
-    // Subsequent poll keeps revoked without calling access request automatically
+    const requestsBeforePolls = world.countCommands("access request");
     clock += 10_000;
-    const stayedRevokedSnap = await activeSource.read();
-    expect(stayedRevokedSnap.connection).toEqual({ kind: "revoked" });
-    expect(firstCalls).toEqual([
-      "access status --json",
-      "ps --json",
-      "ps --json",
-      "access status --json",
+    expect((await source.read()).connection).toEqual({ kind: "revoked" });
+    expect(world.countCommands("access request")).toBe(requestsBeforePolls);
+
+    // Plugin restart still sees revoked and never auto-requests
+    const restarted = new HideCliSource({ exec: world.exec, now: () => clock });
+    expect((await restarted.read()).connection).toEqual({ kind: "revoked" });
+    clock += 10_000;
+    expect((await restarted.read()).connection).toEqual({ kind: "revoked" });
+    expect(world.countCommands("access request")).toBe(requestsBeforePolls);
+
+    // Single requestAccess() settles + removes stale .key (1st call) and opens fresh .request (2nd call)
+    const callsBeforeAction = world.calls.length;
+    restarted.requestAccess();
+    const reRequested = await restarted.read();
+    expect(reRequested.connection).toEqual({ kind: "pending" });
+    expect(world.keyFile?.kept).toBe("request");
+    expect(world.calls.slice(callsBeforeAction).map((c) => c.args)).toEqual([
+      ["access", "request", "--name", "streamdeck", "--json"],
+      ["access", "request", "--name", "streamdeck", "--json"],
     ]);
 
-    // Recreated HideCliSource (plugin restart) also sees status access_revoked and keeps revoked
-    const sourceAfterRestart = new HideCliSource({ exec: exec1, now: () => clock });
-    expect((await sourceAfterRestart.read()).connection).toEqual({ kind: "revoked" });
-    expect(calls1).toEqual(["access status --json"]);
-
-    // User presses key -> retry() -> immediate access request on next read (no 3s wait)
-    clock += 100;
-    sourceAfterRestart.retry();
-    const afterRetrySnap = await sourceAfterRestart.read();
-    expect(afterRetrySnap.connection).toEqual({ kind: "pending" });
-    expect(calls1).toEqual([
-      "access status --json",
-      "access request --name streamdeck --json",
-    ]);
-
-    // Unused variable cleanup
-    void source1;
-    void requestApproved;
+    // If the 2nd access request also refuses/fails (e.g. Hide stops), it stops cleanly without looping
+    const failingWorld = new FakeHideWorld();
+    failingWorld.seed("key", "revoked");
+    const failingSource = new HideCliSource({ exec: failingWorld.exec, now: () => clock });
+    expect((await failingSource.read()).connection).toEqual({ kind: "revoked" });
+    failingWorld.running = false;
+    failingSource.requestAccess();
+    expect((await failingSource.read()).connection).toEqual({ kind: "hide_unavailable" });
+    expect(failingWorld.countCommands("access request")).toBe(1);
   });
 
-  it("path 2: status or ps returning access_request_expired immediately runs access request -> pending", async () => {
-    const calls: string[] = [];
-    let statusExpired = true;
+  it("keeps refused without auto-requesting (during pending poll or after restart) until one requestAccess()", async () => {
+    let clock = 2_000;
+    const liveWorld = new FakeHideWorld();
+    const liveSource = new HideCliSource({ exec: liveWorld.exec, now: () => clock });
 
-    const fakeExec: HideExec = vi.fn(async (_file, args) => {
-      const cmd = args.join(" ");
-      calls.push(cmd);
-      if (cmd === "access status --json") {
-        return statusExpired
-          ? refusalJson("access_request_expired", "The request was dropped")
-          : okJson({ state: "pending" });
-      }
-      if (cmd === "access request --name streamdeck --json") {
-        statusExpired = false;
-        return okJson({ state: "pending", id: "req-new" });
-      }
-      throw new Error(`Unexpected command: ${cmd}`);
-    });
+    await liveSource.read();
+    liveSource.requestAccess();
+    expect((await liveSource.read()).connection).toEqual({ kind: "pending" });
 
-    const source = new HideCliSource({ exec: fakeExec, now: () => 2_000 });
-    const snap = await source.read();
-    expect(snap.connection).toEqual({ kind: "pending" });
-    expect(calls).toEqual([
-      "access status --json",
-      "access request --name streamdeck --json",
-    ]);
+    // Operator refuses during active polling -> settles, drops .request, halts on refused
+    liveWorld.refuse();
+    clock += ACCESS_REQUEST_RETRY_INTERVAL_MS;
+    expect((await liveSource.read()).connection).toEqual({ kind: "refused" });
+    expect(liveWorld.keyFile).toBeNull();
+
+    const requestsAtRefusal = liveWorld.countCommands("access request");
+    clock += 10_000;
+    expect((await liveSource.read()).connection).toEqual({ kind: "refused" });
+    expect(liveWorld.countCommands("access request")).toBe(requestsAtRefusal);
+
+    liveSource.requestAccess();
+    expect((await liveSource.read()).connection).toEqual({ kind: "pending" });
+    expect(liveWorld.countCommands("access request")).toBe(requestsAtRefusal + 1);
+
+    // Case where request was refused while plugin was off (.request left on disk)
+    const offlineWorld = new FakeHideWorld();
+    offlineWorld.seed("request", "refused");
+    const offlineSource = new HideCliSource({ exec: offlineWorld.exec, now: () => clock });
+    expect((await offlineSource.read()).connection).toEqual({ kind: "refused" });
+    clock += 10_000;
+    expect((await offlineSource.read()).connection).toEqual({ kind: "refused" });
+    expect(offlineWorld.countCommands("access request")).toBe(0);
+
+    offlineSource.requestAccess();
+    expect((await offlineSource.read()).connection).toEqual({ kind: "pending" });
+    expect(offlineWorld.countCommands("access request")).toBe(2);
   });
 
-  it("path 3: status returning access_refused keeps refused without auto-request, and retry() immediately re-requests", async () => {
+  it("shows expired on Hide restart with zero new auto-requests until one requestAccess() -> pending", async () => {
+    let clock = 3_000;
+    const pollWorld = new FakeHideWorld();
+    const pollSource = new HideCliSource({ exec: pollWorld.exec, now: () => clock });
+
+    await pollSource.read();
+    pollSource.requestAccess();
+    expect((await pollSource.read()).connection).toEqual({ kind: "pending" });
+
+    // Hide restarts and drops in-memory pending requests while .request stays on disk
+    pollWorld.restartDaemon();
+    clock += ACCESS_REQUEST_RETRY_INTERVAL_MS;
+    // Pending check gets access_request_expired and MUST stop at expired (no 2nd request)
+    expect((await pollSource.read()).connection).toEqual({ kind: "expired" });
+    expect(pollWorld.keyFile).toBeNull();
+    const reqsAfterExpire = pollWorld.countCommands("access request");
+    clock += 10_000;
+    expect((await pollSource.read()).connection).toEqual({ kind: "expired" });
+    expect(pollWorld.countCommands("access request")).toBe(reqsAfterExpire);
+
+    // Single requestAccess() opens a new request
+    pollSource.requestAccess();
+    expect((await pollSource.read()).connection).toEqual({ kind: "pending" });
+    expect(pollWorld.countCommands("access request")).toBe(reqsAfterExpire + 1);
+
+    // Hide restarted while plugin was off (.request still on disk) -> status shows expired, 0 auto-requests
+    const offlineWorld = new FakeHideWorld();
+    offlineWorld.seed("request", "dropped");
+    const offlineSource = new HideCliSource({ exec: offlineWorld.exec, now: () => clock });
+    expect((await offlineSource.read()).connection).toEqual({ kind: "expired" });
+    clock += 10_000;
+    expect((await offlineSource.read()).connection).toEqual({ kind: "expired" });
+    expect(offlineWorld.countCommands("access request")).toBe(0);
+
+    offlineSource.requestAccess();
+    expect((await offlineSource.read()).connection).toEqual({ kind: "pending" });
+    expect(offlineWorld.countCommands("access request")).toBe(2);
+  });
+
+  it("reports error on access_key_unreadable without auto-requesting, and recovers to pending on requestAccess()", async () => {
     let clock = 1_000;
-    const calls: string[] = [];
-    let refusedOnServer = true;
+    const world = new FakeHideWorld();
+    world.seed("unreadable");
 
-    const fakeExec: HideExec = vi.fn(async (_file, args) => {
-      const cmd = args.join(" ");
-      calls.push(cmd);
-      if (cmd === "access status --json") {
-        return refusedOnServer
-          ? refusalJson("access_refused", "The operator refused this tool")
-          : okJson({ state: "pending" });
-      }
-      if (cmd === "access request --name streamdeck --json") {
-        refusedOnServer = false;
-        return okJson({ state: "pending", id: "req-retry" });
-      }
-      throw new Error(`Unexpected command: ${cmd}`);
-    });
-
-    const source = new HideCliSource({ exec: fakeExec, now: () => clock });
-    expect((await source.read()).connection).toEqual({ kind: "refused" });
-
-    clock += 10_000;
-    expect((await source.read()).connection).toEqual({ kind: "refused" });
-    expect(calls).toEqual(["access status --json", "access status --json"]);
-
-    // retry() bypasses 3s wait and executes access request on next read
-    clock += 50;
-    source.retry();
-    expect((await source.read()).connection).toEqual({ kind: "pending" });
-    expect(calls).toEqual([
-      "access status --json",
-      "access status --json",
-      "access request --name streamdeck --json",
-    ]);
-
-    // retry() in pending state is a no-op (respects 3s throttle)
-    clock += 500;
-    source.retry();
-    expect((await source.read()).connection).toEqual({ kind: "pending" });
-    expect(calls).toHaveLength(3);
-  });
-
-  it("path 4: status or ps returning access_key_unreadable immediately runs access request", async () => {
-    const statusCalls: string[] = [];
-    const statusUnreadableExec: HideExec = vi.fn(async (_file, args) => {
-      const cmd = args.join(" ");
-      statusCalls.push(cmd);
-      if (cmd === "access status --json") {
-        return refusalJson("access_key_unreadable", "Key file cannot be read");
-      }
-      if (cmd === "access request --name streamdeck --json") {
-        return okJson({ state: "pending", id: "req-clean" });
-      }
-      throw new Error(`Unexpected command: ${cmd}`);
-    });
-
-    const sourceA = new HideCliSource({ exec: statusUnreadableExec, now: () => 1_000 });
-    expect((await sourceA.read()).connection).toEqual({ kind: "pending" });
-    expect(statusCalls).toEqual([
-      "access status --json",
-      "access request --name streamdeck --json",
-    ]);
-
-    // Also when ps --json fails with access_key_unreadable
-    const psCalls: string[] = [];
-    const psUnreadableExec: HideExec = vi.fn(async (_file, args) => {
-      const cmd = args.join(" ");
-      psCalls.push(cmd);
-      if (cmd === "access status --json") {
-        return okJson({ state: "connected" });
-      }
-      if (cmd === "ps --json") {
-        return refusalJson("access_key_unreadable", "Key file cannot be read");
-      }
-      if (cmd === "access request --name streamdeck --json") {
-        return refusalJson("access_name_taken", "A connected tool has this name");
-      }
-      throw new Error(`Unexpected command: ${cmd}`);
-    });
-
-    const sourceB = new HideCliSource({ exec: psUnreadableExec, now: () => 2_000 });
-    const snapB = await sourceB.read();
-    expect(snapB.connection.kind).toBe("error");
-    if (snapB.connection.kind === "error") {
-      expect(snapB.connection.message).toContain("access_name_taken");
+    const source = new HideCliSource({ exec: world.exec, now: () => clock });
+    const errSnap = await source.read();
+    expect(errSnap.connection.kind).toBe("error");
+    if (errSnap.connection.kind === "error") {
+      expect(errSnap.connection.message).toContain("access_key_unreadable");
     }
-    expect(psCalls).toEqual([
-      "access status --json",
-      "ps --json",
-      "access request --name streamdeck --json",
-    ]);
-  });
+    clock += 10_000;
+    expect((await source.read()).connection.kind).toBe("error");
+    expect(world.countCommands("access request")).toBe(0);
 
-  it("throttles access request to >= 3s even when Hide is unavailable and no key file exists", async () => {
-    let clock = 0;
-    const calls: string[] = [];
-
-    const unavailableExec: HideExec = vi.fn(async (_file, args) => {
-      const cmd = args.join(" ");
-      calls.push(cmd);
-      if (cmd === "access status --json") {
-        return refusalJson("access_not_connected");
-      }
-      if (cmd === "access request --name streamdeck --json") {
-        return refusalJson("hide_unavailable", "Start Hide on this machine");
-      }
-      throw new Error(`Unexpected command: ${cmd}`);
-    });
-
-    const source = new HideCliSource({ exec: unavailableExec, now: () => clock });
-    expect((await source.read()).connection).toEqual({ kind: "hide_unavailable" });
-    expect(calls).toEqual([
-      "access status --json",
-      "access request --name streamdeck --json",
-    ]);
-
-    // At +1500ms (< 3000ms), status runs but request is throttled and hide_unavailable is preserved
-    clock += 1_500;
-    expect((await source.read()).connection).toEqual({ kind: "hide_unavailable" });
-    expect(calls).toEqual([
-      "access status --json",
-      "access request --name streamdeck --json",
-      "access status --json",
-    ]);
-
-    // At +3000ms (>= 3000ms), request runs again
-    clock += 1_500;
-    expect((await source.read()).connection).toEqual({ kind: "hide_unavailable" });
-    expect(calls).toEqual([
-      "access status --json",
-      "access request --name streamdeck --json",
-      "access status --json",
-      "access status --json",
-      "access request --name streamdeck --json",
-    ]);
+    // requestAccess() runs access request, which removes the damaged file and opens a fresh request
+    source.requestAccess();
+    expect((await source.read()).connection).toEqual({ kind: "pending" });
+    expect(world.keyFile?.kept).toBe("request");
+    expect(world.countCommands("access request")).toBe(1);
   });
 
   it("maps every access refusal code, outdated hide CLI, and ENOENT to the expected ConnectionState", async () => {
@@ -573,6 +583,8 @@ describe("HideCliSource", () => {
       { code: "access_pending", expectedKind: "pending" },
       { code: "access_refused", expectedKind: "refused" },
       { code: "access_revoked", expectedKind: "revoked" },
+      { code: "access_request_expired", expectedKind: "expired" },
+      { code: "access_not_connected", expectedKind: "not_connected" },
       { code: "access_unavailable", expectedKind: "hide_unavailable" },
       { code: "hide_unavailable", expectedKind: "hide_unavailable" },
     ];
@@ -588,19 +600,7 @@ describe("HideCliSource", () => {
       expect(snap.agents).toEqual([]);
     }
 
-    // access_request_expired directly returned by request when status is access_not_connected
-    const expiredSource = new HideCliSource({
-      exec: vi.fn(async (_file, args) => {
-        if (args[1] === "status") {
-          return refusalJson("access_not_connected");
-        }
-        return refusalJson("access_request_expired");
-      }),
-      now: () => 1_000,
-    });
-    expect((await expiredSource.read()).connection).toEqual({ kind: "expired" });
-
-    // Error codes that map to { kind: "error", message } containing the reason code
+    // Error codes (returned on requestAccess() or status) map to { kind: "error", message } containing the code
     for (const code of [
       "access_from_pane",
       "access_name_taken",
@@ -608,21 +608,16 @@ describe("HideCliSource", () => {
       "access_limit",
     ]) {
       const source = new HideCliSource({
-        exec: vi.fn(async (_file, args) => {
-          if (args[1] === "status") {
-            return refusalJson("access_not_connected");
-          }
-          return refusalJson(code, `detail for ${code}`);
-        }),
+        exec: vi.fn(async () => refusalJson(code, `detail for ${code}`)),
         now: () => 1_000,
       });
+      source.requestAccess();
       const snap = await source.read();
       expect(snap.connection.kind).toBe("error");
       if (snap.connection.kind === "error") {
         expect(snap.connection.message).toContain(code);
       }
     }
-
     // Outdated hide (1.2.8 without `access` subcommand) -> hide_outdated
     const outdatedSource = new HideCliSource({
       exec: vi.fn(async () => ({
@@ -848,12 +843,21 @@ describe("HideCliSource", () => {
       expect(snap.connection.message).toContain("timed out");
     }
 
-    // Overall readTimeoutMs caps multi-command reads
+    // Overall readTimeoutMs caps multi-command reads (e.g. access status -> ps)
     const slowMultiCommandExec: HideExec = vi.fn(
       (_file, args) =>
         new Promise<HideExecResult>((resolve) => {
-          const delay = args[1] === "status" ? 300 : 1_000;
-          setTimeout(() => resolve(refusalJson("access_not_connected")), delay);
+          const isStatus = args[1] === "status";
+          const delay = isStatus ? 300 : 1_000;
+          setTimeout(
+            () =>
+              resolve(
+                isStatus
+                  ? okJson({ state: "connected" })
+                  : okJson(makeFakePsPayload([])),
+              ),
+            delay,
+          );
         }),
     );
     const cappedSource = new HideCliSource({
@@ -993,8 +997,7 @@ wait
       const disposeSnap = await disposeReadPromise;
       expect(disposeSnap.connection.kind).toBe("error");
 
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      expect(isPidAlive(disposePid)).toBe(false);
+      await waitForPidExit(disposePid);
 
       // 2) timeout kills grandchild /bin/sleep process and returns "timed out" message
       vi.stubEnv("HIDE_TEST_PID_FILE", pidFileTimeout);
@@ -1014,8 +1017,7 @@ wait
         expect(timeoutSnap.connection.message).toContain("timed out");
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      expect(isPidAlive(timeoutPid)).toBe(false);
+      await waitForPidExit(timeoutPid);
     } finally {
       for (const pid of pidsToCleanup) {
         try {

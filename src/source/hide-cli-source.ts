@@ -253,11 +253,11 @@ export class HideCliSource implements HideSource {
     this.accessMachine = new HideAccessStateMachine(this.now);
   }
 
-  retry(): void {
+  requestAccess(): void {
     if (this.disposed) {
       return;
     }
-    this.accessMachine.retry();
+    this.accessMachine.requestAccess();
   }
 
   read(): Promise<HideSnapshot> {
