@@ -7,10 +7,13 @@
 
   let websocket = null;
   let inspectorUuid = "";
-  let globalSettings = Object.assign({}, DEFAULT_GLOBAL_SETTINGS);
+  let hasLoadedGlobalSettings = false;
+  let storedGlobalSettings = {};
+  let pendingGlobalPatch = {};
   let actionSettings = {};
   const actionListeners = [];
   const globalListeners = [];
+  const committedValues = new WeakMap();
 
   function send(payload) {
     if (websocket && websocket.readyState === WebSocket.OPEN) {
@@ -18,12 +21,32 @@
     }
   }
 
+  function effectiveGlobalSettings() {
+    return Object.assign({}, DEFAULT_GLOBAL_SETTINGS, storedGlobalSettings, pendingGlobalPatch);
+  }
+
+  function mergePatch(base, patch) {
+    const next = Object.assign({}, base);
+    Object.keys(patch).forEach(function (key) {
+      if (patch[key] === undefined) {
+        delete next[key];
+      } else {
+        next[key] = patch[key];
+      }
+    });
+    return next;
+  }
+
   function readElementValue(el) {
     if (el.type === "checkbox") {
       return el.checked;
     }
     if (el.type === "number") {
-      const parsed = Number(el.value);
+      const trimmed = el.value.trim();
+      if (trimmed === "") {
+        return undefined;
+      }
+      const parsed = Number(trimmed);
       return Number.isFinite(parsed) ? parsed : undefined;
     }
     return el.value;
@@ -33,15 +56,16 @@
     const resolved = value !== undefined && value !== null ? value : fallback;
     if (el.type === "checkbox") {
       el.checked = Boolean(resolved);
+      committedValues.set(el, readElementValue(el));
       return;
     }
-    if (resolved !== undefined && resolved !== null) {
-      el.value = String(resolved);
-    }
+    el.value = resolved !== undefined && resolved !== null ? String(resolved) : "";
+    committedValues.set(el, readElementValue(el));
   }
 
   function updateVisibility() {
-    const isFake = (globalSettings.source || DEFAULT_GLOBAL_SETTINGS.source) === "fake";
+    const current = effectiveGlobalSettings();
+    const isFake = current.source === "fake";
     document.querySelectorAll("[data-visible-when-source]").forEach(function (node) {
       const expected = node.getAttribute("data-visible-when-source");
       const visible = (expected === "fake" && isFake) || (expected === "hide" && !isFake);
@@ -50,14 +74,15 @@
   }
 
   function applyGlobalSettingsToDom() {
+    const current = effectiveGlobalSettings();
     document.querySelectorAll("[data-global-setting]").forEach(function (el) {
       const key = el.getAttribute("data-global-setting");
       if (!key) return;
-      writeElementValue(el, globalSettings[key], DEFAULT_GLOBAL_SETTINGS[key]);
+      writeElementValue(el, current[key], DEFAULT_GLOBAL_SETTINGS[key]);
     });
     updateVisibility();
     globalListeners.forEach(function (fn) {
-      fn(Object.assign({}, globalSettings));
+      fn(Object.assign({}, current));
     });
   }
 
@@ -74,17 +99,22 @@
   }
 
   function persistGlobalSettings(patch) {
-    globalSettings = Object.assign({}, DEFAULT_GLOBAL_SETTINGS, globalSettings, patch);
+    if (!hasLoadedGlobalSettings && websocket) {
+      pendingGlobalPatch = mergePatch(pendingGlobalPatch, patch);
+      updateVisibility();
+      return;
+    }
+    storedGlobalSettings = mergePatch(storedGlobalSettings, patch);
     updateVisibility();
     send({
       event: "setGlobalSettings",
       context: inspectorUuid,
-      payload: globalSettings,
+      payload: storedGlobalSettings,
     });
   }
 
   function persistActionSettings(patch) {
-    actionSettings = Object.assign({}, actionSettings, patch);
+    actionSettings = mergePatch(actionSettings, patch);
     send({
       event: "setSettings",
       context: inspectorUuid,
@@ -92,12 +122,32 @@
     });
   }
 
+  function bindControlEvents(el, onCommit) {
+    if (el.tagName === "SELECT" || el.type === "checkbox") {
+      el.addEventListener("change", onCommit);
+      return;
+    }
+    committedValues.set(el, readElementValue(el));
+    const commitIfChanged = function () {
+      const currentValue = readElementValue(el);
+      if (currentValue === committedValues.get(el)) {
+        return;
+      }
+      committedValues.set(el, currentValue);
+      onCommit();
+    };
+    el.addEventListener("change", commitIfChanged);
+    el.addEventListener("blur", commitIfChanged);
+  }
+
   function bindInputs() {
+    applyGlobalSettingsToDom();
+    applyActionSettingsToDom();
+
     document.querySelectorAll("[data-global-setting]").forEach(function (el) {
       const key = el.getAttribute("data-global-setting");
       if (!key) return;
-      const eventName = el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input";
-      el.addEventListener(eventName, function () {
+      bindControlEvents(el, function () {
         const next = {};
         next[key] = readElementValue(el);
         persistGlobalSettings(next);
@@ -107,16 +157,12 @@
     document.querySelectorAll("[data-action-setting]").forEach(function (el) {
       const key = el.getAttribute("data-action-setting");
       if (!key) return;
-      const eventName = el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input";
-      el.addEventListener(eventName, function () {
+      bindControlEvents(el, function () {
         const next = {};
         next[key] = readElementValue(el);
         persistActionSettings(next);
       });
     });
-
-    applyGlobalSettingsToDom();
-    applyActionSettingsToDom();
   }
 
   if (document.readyState === "loading") {
@@ -126,9 +172,7 @@
   }
 
   window.hidePropertyInspector = {
-    getGlobalSettings: function () {
-      return Object.assign({}, globalSettings);
-    },
+    getGlobalSettings: effectiveGlobalSettings,
     setGlobalSettings: persistGlobalSettings,
     onGlobalSettings: function (listener) {
       globalListeners.push(listener);
@@ -150,6 +194,7 @@
     inActionInfo
   ) {
     inspectorUuid = inPropertyInspectorUUID;
+    hasLoadedGlobalSettings = false;
     try {
       const parsedAction = JSON.parse(inActionInfo || "{}");
       if (parsedAction && parsedAction.payload && parsedAction.payload.settings) {
@@ -186,8 +231,18 @@
       }
       if (message.event === "didReceiveGlobalSettings") {
         const incoming = (message.payload && message.payload.settings) || {};
-        globalSettings = Object.assign({}, DEFAULT_GLOBAL_SETTINGS, incoming);
+        hasLoadedGlobalSettings = true;
+        const hadPending = Object.keys(pendingGlobalPatch).length > 0;
+        storedGlobalSettings = mergePatch(incoming, pendingGlobalPatch);
+        pendingGlobalPatch = {};
         applyGlobalSettingsToDom();
+        if (hadPending) {
+          send({
+            event: "setGlobalSettings",
+            context: inspectorUuid,
+            payload: storedGlobalSettings,
+          });
+        }
       } else if (message.event === "didReceiveSettings") {
         const incoming = (message.payload && message.payload.settings) || {};
         actionSettings = Object.assign({}, incoming);

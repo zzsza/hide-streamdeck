@@ -15,6 +15,7 @@ export const WORKING_COUNT_UUID = "com.zzsza.hide-status.working-count";
 export class WorkingCountAction extends SingletonAction {
   private readonly hub: StatusHub;
   private readonly subscriptions = new Map<string, () => void>();
+  private readonly lastSvgByContext = new Map<string, string>();
 
   constructor(hub: StatusHub) {
     super();
@@ -23,10 +24,15 @@ export class WorkingCountAction extends SingletonAction {
 
   override onWillAppear(ev: WillAppearEvent): void {
     this.subscriptions.get(ev.action.id)?.();
+    this.lastSvgByContext.delete(ev.action.id);
 
     const unsubscribe = this.hub.subscribe((snapshot) => {
       if (ev.action.isKey()) {
         const svg = renderWorkingCountKey(snapshot);
+        if (this.lastSvgByContext.get(ev.action.id) === svg) {
+          return;
+        }
+        this.lastSvgByContext.set(ev.action.id, svg);
         void ev.action.setImage(svgToDataUrl(svg));
       }
     });
@@ -35,6 +41,7 @@ export class WorkingCountAction extends SingletonAction {
   }
 
   override onWillDisappear(ev: WillDisappearEvent): void {
+    this.lastSvgByContext.delete(ev.action.id);
     const unsubscribe = this.subscriptions.get(ev.action.id);
     if (unsubscribe) {
       this.subscriptions.delete(ev.action.id);

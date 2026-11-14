@@ -31,14 +31,14 @@ export class StatusHub {
   private readonly onListenerError?: (error: unknown) => void;
 
   private settings: NormalizedGlobalSettings;
-  private source: HideSource;
+  private source: HideSource | null = null;
   private sourceGeneration = 0;
+  private ready = false;
 
   private readonly listeners = new Set<StatusListener>();
   private lastSnapshot: HideSnapshot | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private inFlight = false;
-  private repollImmediately = false;
+  private activeReadGeneration: number | null = null;
   private disposed = false;
 
   constructor(options: StatusHubOptions = {}) {
@@ -48,7 +48,16 @@ export class StatusHub {
     this.sourceFactory =
       options.sourceFactory ?? ((normalized) => createHideSource(normalized, { now: this.now }));
     this.settings = normalizeGlobalSettings(options.initialSettings);
-    this.source = this.sourceFactory(this.settings);
+
+    if (options.initialSettings !== undefined) {
+      this.ready = true;
+      this.sourceGeneration = 1;
+      this.source = this.sourceFactory(this.settings);
+    }
+  }
+
+  isReady(): boolean {
+    return this.ready;
   }
 
   getSettings(): NormalizedGlobalSettings {
@@ -75,7 +84,7 @@ export class StatusHub {
       this.notifySingle(listener, this.lastSnapshot);
     }
 
-    if (wasEmpty) {
+    if (wasEmpty && this.ready) {
       this.triggerPollNow();
     }
 
@@ -88,7 +97,6 @@ export class StatusHub {
       this.listeners.delete(listener);
       if (this.listeners.size === 0) {
         this.clearTimer();
-        this.repollImmediately = false;
       }
     };
   }
@@ -99,20 +107,19 @@ export class StatusHub {
     }
 
     const nextSettings = normalizeGlobalSettings(rawSettings);
-    if (areSettingsEqual(this.settings, nextSettings)) {
+    if (this.ready && areSettingsEqual(this.settings, nextSettings)) {
       return;
     }
 
     const previousSource = this.source;
+    this.ready = true;
     this.settings = nextSettings;
     this.sourceGeneration += 1;
     this.lastSnapshot = null;
     this.clearTimer();
 
-    try {
-      previousSource.dispose?.();
-    } catch {
-      // Ignore disposal errors from outgoing sources.
+    if (previousSource !== null) {
+      this.disposeSourceSafely(previousSource);
     }
 
     this.source = this.sourceFactory(this.settings);
@@ -127,15 +134,29 @@ export class StatusHub {
       return;
     }
     this.disposed = true;
+    this.ready = false;
     this.sourceGeneration += 1;
+    this.activeReadGeneration = null;
     this.clearTimer();
-    this.repollImmediately = false;
     this.listeners.clear();
-    try {
-      this.source.dispose?.();
-    } catch {
-      // Ignore disposal errors.
+
+    const currentSource = this.source;
+    this.source = null;
+    if (currentSource !== null) {
+      this.disposeSourceSafely(currentSource);
     }
+  }
+
+  private disposeSourceSafely(target: HideSource): void {
+    try {
+      target.dispose?.();
+    } catch (error) {
+      this.reportError(error);
+    }
+  }
+
+  private reportError(error: unknown): void {
+    this.onListenerError?.(error);
   }
 
   private clearTimer(): void {
@@ -147,22 +168,24 @@ export class StatusHub {
 
   private triggerPollNow(): void {
     this.clearTimer();
-    if (this.inFlight) {
-      this.repollImmediately = true;
-      return;
-    }
     void this.runPoll();
   }
 
   private async runPoll(): Promise<void> {
-    if (this.disposed || this.listeners.size === 0 || this.inFlight) {
+    if (
+      this.disposed ||
+      !this.ready ||
+      this.source === null ||
+      this.listeners.size === 0 ||
+      this.activeReadGeneration === this.sourceGeneration
+    ) {
       return;
     }
 
     this.clearTimer();
-    this.inFlight = true;
     const capturedGeneration = this.sourceGeneration;
     const capturedSource = this.source;
+    this.activeReadGeneration = capturedGeneration;
 
     let snapshot: HideSnapshot;
     try {
@@ -180,43 +203,35 @@ export class StatusHub {
         readAt: this.now(),
       };
     } finally {
-      this.inFlight = false;
-    }
-
-    if (this.disposed) {
-      return;
-    }
-
-    // If settings swapped the source while read() was running, discard stale result.
-    if (capturedGeneration !== this.sourceGeneration) {
-      if (this.listeners.size > 0) {
-        this.repollImmediately = false;
-        void this.runPoll();
+      if (this.activeReadGeneration === capturedGeneration) {
+        this.activeReadGeneration = null;
       }
+    }
+
+    if (this.disposed || capturedGeneration !== this.sourceGeneration) {
       return;
     }
 
     this.lastSnapshot = snapshot;
 
     if (this.listeners.size === 0) {
-      this.repollImmediately = false;
       return;
     }
 
     this.broadcast(snapshot);
 
-    if (this.disposed || this.listeners.size === 0) {
-      this.repollImmediately = false;
-      return;
-    }
-
-    if (this.repollImmediately) {
-      this.repollImmediately = false;
-      void this.runPoll();
+    if (
+      this.disposed ||
+      capturedGeneration !== this.sourceGeneration ||
+      this.listeners.size === 0
+    ) {
       return;
     }
 
     this.timer = setTimeout(() => {
+      if (capturedGeneration !== this.sourceGeneration) {
+        return;
+      }
       this.timer = null;
       void this.runPoll();
     }, this.intervalMs);
@@ -235,7 +250,7 @@ export class StatusHub {
     try {
       listener(snapshot);
     } catch (error) {
-      this.onListenerError?.(error);
+      this.reportError(error);
     }
   }
 }
