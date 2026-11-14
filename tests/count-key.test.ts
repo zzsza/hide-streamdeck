@@ -4,6 +4,7 @@ import { generatePreviewHtml } from "../scripts/preview.js";
 import { NeedsYouCountAction } from "../src/actions/needs-you-count.js";
 import { WorkingCountAction } from "../src/actions/working-count.js";
 import {
+  connectionHint,
   connectionLabel,
   COUNT_KEY_COLORS,
   KEY_SIZE,
@@ -136,6 +137,7 @@ describe("renderCountKey", () => {
       const workingSvg = renderCountKey("working", snapshot);
       const needsYouSvg = renderCountKey("needs_you", snapshot);
       const label = connectionLabel(connection);
+      const hint = connectionHint(connection);
 
       if (label === null) {
         expect(workingSvg).toContain(`fill="${COUNT_KEY_COLORS.workingActive.background}"`);
@@ -155,6 +157,21 @@ describe("renderCountKey", () => {
         expect(svg).not.toContain(">2</text>");
         expect(svg).not.toContain(">1</text>");
         expect(svg).not.toContain("synthetic-internal-error-detail");
+
+        if (hint !== null) {
+          expect(svg).toContain(`>${hint}</text>`);
+          const statusMatch = svg.match(/y="(\d+)"[^>]*font-size="(\d+)"[^>]*>(?:거절됨|연결 끊김)<\/text><text x="72" y="(\d+)"[^>]*font-size="(\d+)"[^>]*>눌러서 다시 요청<\/text>/);
+          expect(statusMatch).not.toBeNull();
+          const statusY = Number(statusMatch?.[1]);
+          const statusFont = Number(statusMatch?.[2]);
+          const hintY = Number(statusMatch?.[3]);
+          const hintFont = Number(statusMatch?.[4]);
+          expect(hintY).toBeGreaterThan(statusY);
+          expect(hintFont).toBeLessThan(statusFont);
+          expect(hintFont).toBeLessThanOrEqual(14);
+        } else {
+          expect(svg).not.toContain("눌러서 다시 요청");
+        }
       }
     }
   });
@@ -229,5 +246,21 @@ describe("preview output for count keys", () => {
     expect(svgs.some((svg) => svg.includes(">Needs You</text>") && svg.includes('fill="#d92d20"'))).toBe(true);
     expect(svgs.some((svg) => svg.includes(">Working</text>") && svg.includes(">연결 안 됨</text>"))).toBe(true);
     expect(svgs.some((svg) => svg.includes(">Needs You</text>") && svg.includes(">승인 대기</text>"))).toBe(true);
+    expect(
+      svgs.some(
+        (svg) =>
+          svg.includes(">Working</text>") &&
+          svg.includes(">연결 끊김</text>") &&
+          svg.includes(">눌러서 다시 요청</text>"),
+      ),
+    ).toBe(true);
+    expect(
+      svgs.some(
+        (svg) =>
+          svg.includes(">Needs You</text>") &&
+          svg.includes(">거절됨</text>") &&
+          svg.includes(">눌러서 다시 요청</text>"),
+      ),
+    ).toBe(true);
   });
 });

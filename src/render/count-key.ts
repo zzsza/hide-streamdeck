@@ -1,6 +1,6 @@
 import type { HideSnapshot } from "../source/types.js";
 import { summarize } from "../state/classify.js";
-import { connectionLabel } from "./connection-label.js";
+import { connectionHint, connectionLabel } from "./connection-label.js";
 import { createKeySvg, escapeXml } from "./key-svg.js";
 
 export type CountKeyKind = "working" | "needs_you";
@@ -13,6 +13,7 @@ export const COUNT_KEY_COLORS = {
     border: "#475569",
     label: "#94a3b8",
     text: "#cbd5e1",
+    hint: "#94a3b8",
   },
   workingZero: {
     background: "#2b303a",
@@ -62,9 +63,17 @@ function getCountLayout(text: string): { fontSize: number; y: number } {
   return { fontSize: 62, y: 108 };
 }
 
-function getStatusLayout(text: string): { fontSize: number; y: number } {
+function getStatusLayout(text: string, hasHint: boolean): { fontSize: number; y: number } {
   const charCount = Array.from(text).length;
-  return charCount > 8 ? { fontSize: 14, y: 92 } : { fontSize: 18, y: 93 };
+  const fontSize = charCount > 8 ? 14 : 18;
+  if (hasHint) {
+    return { fontSize, y: 78 };
+  }
+  return { fontSize, y: charCount > 8 ? 92 : 93 };
+}
+
+function getHintFontSize(text: string): number {
+  return Array.from(text).length > 10 ? 12 : 14;
 }
 
 function getConnectedTheme(kind: CountKeyKind, count: number): CountKeyTheme {
@@ -96,10 +105,14 @@ export function renderCountKey(kind: CountKeyKind, snapshot: HideSnapshot): stri
 
   if (statusText !== null) {
     const palette = COUNT_KEY_COLORS.disconnected;
-    const layout = getStatusLayout(statusText);
+    const hintText = connectionHint(snapshot.connection);
+    const layout = getStatusLayout(statusText, hintText !== null);
     const body = [
       `<text x="72" y="34" text-anchor="middle" fill="${palette.label}" font-family="${FONT_FAMILY}" font-size="16" font-weight="600">${escapeXml(title)}</text>`,
       `<text x="72" y="${layout.y}" text-anchor="middle" fill="${palette.text}" font-family="${FONT_FAMILY}" font-size="${layout.fontSize}" font-weight="600">${escapeXml(statusText)}</text>`,
+      hintText !== null
+        ? `<text x="72" y="110" text-anchor="middle" fill="${palette.hint}" font-family="${FONT_FAMILY}" font-size="${getHintFontSize(hintText)}" font-weight="500">${escapeXml(hintText)}</text>`
+        : "",
     ].join("");
 
     return createKeySvg({
