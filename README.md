@@ -73,12 +73,12 @@ export interface HideSource {
 - `pending`: Access request is waiting for operator approval in Hide
 - `refused`: Operator refused the access request
 - `revoked`: Previously granted access was revoked
-- `expired`: Access grant expired and must be renewed
+- `expired`: Pending access request was dropped (for example, Hide restarted or pending queue evicted it) and is automatically re-requested
 - `hide_unavailable`: Hide application is not currently running
-- `hide_outdated`: Installed `hide` binary lacks the `access` command
+- `hide_outdated`: Installed `hide` binary lacks the `access` command (update Hide to a version supporting `hide access`)
 - `hide_missing`: Configured `hidePath` binary was not found
 - `error`: Unexpected failure with a diagnostic `message`
 
 ## Connecting to Hide
 
-When the data source is set to `Hide CLI (live)` (default), the plugin runs `hide access request --name streamdeck --json` on its first poll with `HIDE_ACCESS=streamdeck`. Open Hide and approve the `streamdeck` request under **Settings › External tools** with **View only** access. Once approved, the plugin exchanges the pending request for a private key on the next poll and reads `hide ps --json` every 1.5 seconds. You can switch between `Hide CLI (live)` and `Fake scenario`, or change `Hide Path`, at any time in the Stream Deck Property Inspector's global settings.
+When the data source is set to `Hide CLI (live)` (default), the plugin runs `hide access status --json` on its first poll with `HIDE_ACCESS=streamdeck`. If no key exists yet (`access_not_connected`), or if a pending request expired (`access_request_expired`) or the key file is unreadable (`access_key_unreadable`), it runs `hide access request --name streamdeck --json` to open a request. Open Hide and approve the `streamdeck` request under **Settings › External tools** with **View only** access. While approval is pending, the plugin polls `hide access request --name streamdeck --json` at least every 3 seconds; once approved, that call exchanges the pending request for a private key and the plugin begins polling `hide ps --json` every 1.5 seconds. If the operator refuses (`refused`) or disconnects (`revoked`) the tool, the plugin keeps showing that state without re-requesting automatically; press any Hide Status key on the Stream Deck to retry `hide access request`. If `hide_outdated` is shown, update Hide to a version that includes `hide access`. You can switch between `Hide CLI (live)` and `Fake scenario`, or change `Hide Path`, at any time in the Stream Deck Property Inspector's global settings.

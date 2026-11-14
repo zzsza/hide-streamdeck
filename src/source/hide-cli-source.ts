@@ -1,4 +1,4 @@
-import { execFile, type ExecFileException } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 
 import {
   HIDE_ACCESS_NAME,
@@ -8,6 +8,8 @@ import { DEFAULT_HIDE_PATH, type HideSnapshot, type HideSource } from "./types.j
 
 export const DEFAULT_EXEC_TIMEOUT_MS = 5_000;
 export const DEFAULT_READ_TIMEOUT_MS = 10_000;
+const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+const PROCESS_GROUP_KILL_GRACE_MS = 150;
 
 export interface HideExecOptions {
   env: Record<string, string>;
@@ -57,8 +59,68 @@ export function buildHideExecEnv(
   return env;
 }
 
+function sendGroupSignal(pid: number, signal: NodeJS.Signals): boolean {
+  try {
+    if (process.platform !== "win32") {
+      process.kill(-pid, signal);
+    } else {
+      process.kill(pid, signal);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isProcessGroupAlive(pid: number): boolean {
+  try {
+    if (process.platform !== "win32") {
+      process.kill(-pid, 0);
+    } else {
+      process.kill(pid, 0);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Default CLI runner using `child_process.execFile` without a shell, supporting timeout and AbortSignal.
+ * Terminates a detached child process and any grandchildren in its process group,
+ * escalating from SIGTERM to SIGKILL after a short grace period.
+ */
+function terminateProcessGroup(child: ChildProcess): void {
+  const pid = child.pid;
+  if (pid === undefined) {
+    return;
+  }
+
+  if (!sendGroupSignal(pid, "SIGTERM")) {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // Child or group already exited.
+    }
+  }
+
+  const killTimer = setTimeout(() => {
+    if (!isProcessGroupAlive(pid)) {
+      return;
+    }
+    if (!sendGroupSignal(pid, "SIGKILL")) {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Child or group already exited.
+      }
+    }
+  }, PROCESS_GROUP_KILL_GRACE_MS);
+  killTimer.unref();
+}
+
+/**
+ * Default CLI runner spawning without a shell in its own process group (`detached: true`)
+ * so timeout or AbortSignal terminates the child and all descendant processes.
  */
 export const defaultHideExec: HideExec = (file, args, opts) => {
   if (opts.signal?.aborted) {
@@ -66,46 +128,103 @@ export const defaultHideExec: HideExec = (file, args, opts) => {
   }
 
   return new Promise<HideExecResult>((resolve, reject) => {
-    const child = execFile(
-      file,
-      args,
-      {
-        env: opts.env,
-        timeout: opts.timeoutMs,
-        signal: opts.signal,
-        windowsHide: true,
-        maxBuffer: 10 * 1024 * 1024,
-      },
-      (error, stdout, stderr) => {
-        const out = String(stdout ?? "");
-        const errText = String(stderr ?? "");
+    let settled = false;
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
 
-        if (error === null) {
-          resolve({
-            stdout: out,
-            stderr: errText,
-            exitCode: child.exitCode ?? 0,
-          });
-          return;
-        }
+    const child = spawn(file, args, {
+      env: opts.env,
+      detached: true,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
 
-        const execErr = error as ExecFileException;
-        if (
-          typeof execErr.code === "number" &&
-          !execErr.killed &&
-          !opts.signal?.aborted
-        ) {
-          resolve({
-            stdout: out,
-            stderr: errText,
-            exitCode: execErr.code,
-          });
-          return;
-        }
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
-        reject(error);
-      },
-    );
+    const cleanup = (): void => {
+      if (timeoutTimer !== undefined) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = undefined;
+      }
+      opts.signal?.removeEventListener("abort", onAbort);
+    };
+
+    const failWith = (error: Error, killGroup: boolean): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      if (killGroup) {
+        terminateProcessGroup(child);
+      }
+      reject(error);
+    };
+
+    const onAbort = (): void => {
+      failWith(createAbortError(opts.signal?.reason), true);
+    };
+
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+
+    if (opts.timeoutMs > 0) {
+      timeoutTimer = setTimeout(() => {
+        failWith(
+          new Error(`hide command timed out after ${opts.timeoutMs}ms`),
+          true,
+        );
+      }, opts.timeoutMs);
+    }
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      if (settled) {
+        return;
+      }
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > MAX_OUTPUT_BYTES) {
+        failWith(new Error("hide stdout exceeded maxBuffer"), true);
+        return;
+      }
+      stdoutChunks.push(chunk);
+    });
+
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (settled) {
+        return;
+      }
+      stderrBytes += chunk.length;
+      if (stderrBytes > MAX_OUTPUT_BYTES) {
+        failWith(new Error("hide stderr exceeded maxBuffer"), true);
+        return;
+      }
+      stderrChunks.push(chunk);
+    });
+
+    child.on("error", (error) => {
+      failWith(error, false);
+    });
+
+    child.on("close", (code, signal) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+
+      if (code === null && signal !== null) {
+        reject(new Error(`hide exited with signal ${signal}`));
+        return;
+      }
+
+      resolve({
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8"),
+        exitCode: code,
+      });
+    });
   });
 };
 
@@ -129,9 +248,16 @@ export class HideCliSource implements HideSource {
     this.readTimeoutMs =
       options.readTimeoutMs ??
       (options.timeoutMs !== undefined
-        ? Math.max(options.timeoutMs, options.timeoutMs * 2)
+        ? options.timeoutMs * 2
         : DEFAULT_READ_TIMEOUT_MS);
     this.accessMachine = new HideAccessStateMachine(this.now);
+  }
+
+  retry(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.accessMachine.retry();
   }
 
   read(): Promise<HideSnapshot> {
