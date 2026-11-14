@@ -12,7 +12,9 @@ import {
   renderNeedsYouCountKey,
   renderWorkingCountKey,
 } from "../src/render/index.js";
+import { FakeHideSource } from "../src/source/fake-source.js";
 import type { AgentRow, ConnectionState, HideSnapshot } from "../src/source/types.js";
+import { summarize } from "../src/state/classify.js";
 import { StatusHub } from "../src/state/status-hub.js";
 
 function makeAgent(index: number, state: string): AgentRow {
@@ -227,12 +229,15 @@ describe("WorkingCountAction and NeedsYouCountAction", () => {
 
     const workingSvg = decodeDataUrl(workingSetImage.mock.calls[0]?.[0] ?? "");
     const needsSvg = decodeDataUrl(needsSetImage.mock.calls[0]?.[0] ?? "");
+    const snapshot = hub.getLastSnapshot();
+    expect(snapshot).not.toBeNull();
+    const expected = summarize(snapshot!);
 
     expect(workingSvg).toContain(">Working</text>");
-    expect(workingSvg).toContain(">1</text>");
+    expect(workingSvg).toContain(`>${expected.working}</text>`);
     expect(needsSvg).toContain('fill="#d92d20"');
     expect(needsSvg).toContain(">Needs You</text>");
-    expect(needsSvg).toContain(">4</text>");
+    expect(needsSvg).toContain(`>${expected.needsYou.length}</text>`);
 
     workingAction.onWillDisappear(workingEvent as never);
     needsYouAction.onWillDisappear(needsEvent as never);
@@ -245,8 +250,9 @@ describe("preview output for count keys", () => {
     const html = await generatePreviewHtml();
     const matches = [...html.matchAll(/src="(data:image\/svg\+xml;charset=utf8,[^"]+)"/g)];
     const svgs = matches.map((match) => decodeURIComponent(match[1]!.slice("data:image/svg+xml;charset=utf8,".length)));
+    const workingManySummary = summarize(await new FakeHideSource({ scenario: "working-many" }).read());
 
-    expect(svgs.some((svg) => svg.includes(">Working</text>") && svg.includes(">3</text>"))).toBe(true);
+    expect(svgs.some((svg) => svg.includes(">Working</text>") && svg.includes(`>${workingManySummary.working}</text>`))).toBe(true);
     expect(svgs.some((svg) => svg.includes(">Needs You</text>") && svg.includes('fill="#d92d20"'))).toBe(true);
     expect(
       svgs.some(
