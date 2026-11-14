@@ -64,6 +64,25 @@
           <option value="cycling">Cycling over time</option>
         </select>
       </div>
+
+      <div class="pi-heading">Hide 연결</div>
+
+      <div class="pi-row">
+        <label for="connectionStatus">상태</label>
+        <div id="connectionStatus" class="pi-status" data-connection-status>확인 중...</div>
+      </div>
+
+      <div class="pi-row" data-visible-when-source="hide">
+        <label></label>
+        <button
+          id="requestAccessButton"
+          type="button"
+          data-request-access
+          data-visible-when-source="hide"
+        >
+          Hide에 연결 요청
+        </button>
+      </div>
     </main>
     <script>
       (function () {

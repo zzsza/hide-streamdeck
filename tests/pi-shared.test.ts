@@ -8,6 +8,8 @@ interface FakeElement {
   type: string;
   value: string;
   checked: boolean;
+  disabled: boolean;
+  textContent: string;
   attributes: Record<string, string>;
   listeners: Record<string, Array<() => void>>;
   classList: {
@@ -31,6 +33,8 @@ function makeElement(
     type,
     value: initialValue,
     checked: false,
+    disabled: false,
+    textContent: "",
     attributes: attrs,
     listeners,
     classList: {
@@ -63,9 +67,19 @@ async function setupPiEnvironment() {
     "data-global-setting": "fakeScenario",
   });
   const slotInput = makeElement("INPUT", "number", { "data-action-setting": "slot" });
+  const connectionStatus = makeElement("DIV", "", { "data-connection-status": "" });
+  const requestButtonRow = makeElement("DIV", "", { "data-visible-when-source": "hide" });
+  const requestButton = makeElement("BUTTON", "button", {
+    "data-request-access": "",
+    "data-visible-when-source": "hide",
+  });
+  const fakeScenarioRow = makeElement("DIV", "", { "data-visible-when-source": "fake" });
 
   const globalControls = [sourceSelect, hidePathInput, scenarioSelect];
   const actionControls = [slotInput];
+  const visibleWhenSourceNodes = [requestButtonRow, requestButton, fakeScenarioRow];
+  const connectionStatusNodes = [connectionStatus];
+  const requestAccessNodes = [requestButton];
 
   const sentMessages: Array<Record<string, unknown>> = [];
   const sockets: MockWebSocket[] = [];
@@ -98,7 +112,9 @@ async function setupPiEnvironment() {
       querySelectorAll(selector: string) {
         if (selector === "[data-global-setting]") return globalControls;
         if (selector === "[data-action-setting]") return actionControls;
-        if (selector === "[data-visible-when-source]") return [];
+        if (selector === "[data-visible-when-source]") return visibleWhenSourceNodes;
+        if (selector === "[data-connection-status]") return connectionStatusNodes;
+        if (selector === "[data-request-access]") return requestAccessNodes;
         return [];
       },
     },
@@ -119,7 +135,16 @@ async function setupPiEnvironment() {
     actionInfo: string,
   ) => void;
 
-  connect(28196, "pi-ctx-1", "registerPropertyInspector", "{}", JSON.stringify({ payload: { settings: { slot: 2 } } }));
+  connect(
+    28196,
+    "pi-ctx-1",
+    "registerPropertyInspector",
+    "{}",
+    JSON.stringify({
+      action: "com.zzsza.hide-status.needs-you-agent",
+      payload: { settings: { slot: 2 } },
+    }),
+  );
   const socket = sockets[0];
   socket?.onopen?.();
 
@@ -128,6 +153,9 @@ async function setupPiEnvironment() {
     hidePathInput,
     scenarioSelect,
     slotInput,
+    connectionStatus,
+    requestButtonRow,
+    requestButton,
     sentMessages,
     receive(message: Record<string, unknown>) {
       socket?.onmessage?.({ data: JSON.stringify(message) });
@@ -201,5 +229,74 @@ describe("ui/pi-shared.js", () => {
       context: "pi-ctx-1",
       payload: {},
     });
+  });
+
+  it("updates connection status text, hides button when source is fake, disables on connected/pending, and sends requestAccess to plugin", async () => {
+    const env = await setupPiEnvironment();
+    env.receive({
+      event: "didReceiveGlobalSettings",
+      payload: { settings: { source: "hide" } },
+    });
+    env.sentMessages.length = 0;
+
+    // Visible when source is hide.
+    expect(env.requestButtonRow.classList.hidden).toBe(false);
+    expect(env.requestButton.classList.hidden).toBe(false);
+
+    // Clicking sends sendToPlugin({ event: "requestAccess" }).
+    env.requestButton.dispatch("click");
+    expect(env.sentMessages).toEqual([
+      {
+        action: "com.zzsza.hide-status.needs-you-agent",
+        event: "sendToPlugin",
+        context: "pi-ctx-1",
+        payload: { event: "requestAccess" },
+      },
+    ]);
+    env.sentMessages.length = 0;
+
+    // Pending disables the button and shows "승인 대기".
+    env.receive({
+      event: "sendToPropertyInspector",
+      payload: { event: "connection", kind: "pending" },
+    });
+    expect(env.connectionStatus.textContent).toBe("승인 대기");
+    expect(env.requestButton.disabled).toBe(true);
+    env.requestButton.dispatch("click");
+    expect(env.sentMessages).toHaveLength(0);
+
+    // Connected disables the button and shows "연결됨".
+    env.receive({
+      event: "sendToPropertyInspector",
+      payload: { event: "connection", kind: "connected" },
+    });
+    expect(env.connectionStatus.textContent).toBe("연결됨");
+    expect(env.requestButton.disabled).toBe(true);
+
+    // Refused, revoked, expired, not_connected re-enable the button and show connectionLabel text.
+    const retryableLabels: ReadonlyArray<[string, string]> = [
+      ["not_connected", "연결 안 됨"],
+      ["refused", "거절됨"],
+      ["revoked", "연결 끊김"],
+      ["expired", "요청 만료"],
+    ];
+    for (const [kind, label] of retryableLabels) {
+      env.receive({
+        event: "sendToPropertyInspector",
+        payload: { event: "connection", kind },
+      });
+      expect(env.connectionStatus.textContent).toBe(label);
+      expect(env.requestButton.disabled).toBe(false);
+    }
+
+    // Switching source to fake hides the requestAccess button.
+    env.sourceSelect.value = "fake";
+    env.sourceSelect.dispatch("change");
+    expect(env.requestButtonRow.classList.hidden).toBe(true);
+    expect(env.requestButton.classList.hidden).toBe(true);
+
+    env.sentMessages.length = 0;
+    env.requestButton.dispatch("click");
+    expect(env.sentMessages).toHaveLength(0);
   });
 });
