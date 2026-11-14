@@ -48,4 +48,8 @@ export class NeedsYouCountAction extends SingletonAction {
       unsubscribe();
     }
   }
+
+  override onKeyDown(): void {
+    this.hub.retry();
+  }
 }

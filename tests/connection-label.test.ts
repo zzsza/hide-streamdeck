@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { connectionLabel } from "../src/render/index.js";
+import { connectionHint, connectionLabel } from "../src/render/index.js";
 import type { ConnectionState } from "../src/source/types.js";
 
-describe("connectionLabel", () => {
+describe("connectionLabel and connectionHint", () => {
   it("returns null for connected and exact short Korean labels for all 9 non-connected states", () => {
     const cases: ReadonlyArray<[ConnectionState, string | null]> = [
       [{ kind: "connected" }, null],
@@ -21,6 +21,26 @@ describe("connectionLabel", () => {
     expect(cases).toHaveLength(10);
     for (const [state, expected] of cases) {
       expect(connectionLabel(state)).toBe(expected);
+    }
+  });
+
+  it("returns retry hint only for refused and revoked states", () => {
+    const cases: ReadonlyArray<[ConnectionState, string | null]> = [
+      [{ kind: "connected" }, null],
+      [{ kind: "not_connected" }, null],
+      [{ kind: "pending" }, null],
+      [{ kind: "refused" }, "눌러서 다시 요청"],
+      [{ kind: "revoked" }, "눌러서 다시 요청"],
+      [{ kind: "expired" }, null],
+      [{ kind: "hide_unavailable" }, null],
+      [{ kind: "hide_outdated" }, null],
+      [{ kind: "hide_missing" }, null],
+      [{ kind: "error", message: "synthetic failure" }, null],
+    ];
+
+    expect(cases).toHaveLength(10);
+    for (const [state, expected] of cases) {
+      expect(connectionHint(state)).toBe(expected);
     }
   });
 });

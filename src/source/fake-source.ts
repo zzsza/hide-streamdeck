@@ -310,6 +310,7 @@ export class FakeHideSource implements HideSource {
   private readonly now: () => number;
   private readonly cycleStepMs: number;
   private readonly startedAt: number;
+  private retriedToPending = false;
 
   constructor(options: FakeHideSourceOptions = {}) {
     this.scenario = isFakeScenarioId(options.scenario) ? options.scenario : DEFAULT_FAKE_SCENARIO;
@@ -318,8 +319,18 @@ export class FakeHideSource implements HideSource {
     this.startedAt = this.now();
   }
 
+  retry(): void {
+    if (this.scenario === "refused" || this.scenario === "revoked") {
+      this.retriedToPending = true;
+    }
+  }
+
   async read(): Promise<HideSnapshot> {
     const readAt = this.now();
+    if (this.retriedToPending && (this.scenario === "refused" || this.scenario === "revoked")) {
+      return buildStaticScenarioSnapshot("pending", readAt);
+    }
+
     if (this.scenario === "cycling") {
       const elapsed = Math.max(0, readAt - this.startedAt);
       const stepIndex = Math.floor(elapsed / this.cycleStepMs) % CYCLING_SEQUENCE.length;

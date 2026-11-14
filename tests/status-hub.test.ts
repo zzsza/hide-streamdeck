@@ -259,4 +259,68 @@ describe("StatusHub", () => {
     unsub();
     hub.dispose();
   });
+
+  it("retry() is a no-op before ready, polls immediately when idle, and queues one immediate follow-up read when in-flight", async () => {
+    const preReadyRetry = vi.fn();
+    const preReadyRead = vi.fn(async () => makeSnapshot(Date.now()));
+    const preReadyHub = new StatusHub({
+      sourceFactory: () => ({ read: preReadyRead, retry: preReadyRetry }),
+    });
+    const unsubPre = preReadyHub.subscribe(() => {});
+    preReadyHub.retry();
+    expect(preReadyRetry).not.toHaveBeenCalled();
+    expect(preReadyRead).not.toHaveBeenCalled();
+    unsubPre();
+    preReadyHub.dispose();
+
+    const resolvers: Array<(snap: HideSnapshot) => void> = [];
+    const retryFn = vi.fn();
+    const readFn = vi.fn(
+      () =>
+        new Promise<HideSnapshot>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    const hub = new StatusHub({
+      initialSettings: { source: "fake" },
+      sourceFactory: () => ({ read: readFn, retry: retryFn }),
+    });
+
+    // Retry while ready with 0 subscribers: invokes source.retry() without polling.
+    hub.retry();
+    expect(retryFn).toHaveBeenCalledTimes(1);
+    expect(readFn).not.toHaveBeenCalled();
+
+    const received: HideSnapshot[] = [];
+    const unsub = hub.subscribe((s) => received.push(s));
+    expect(readFn).toHaveBeenCalledTimes(1);
+
+    // Retry while first read is in-flight: invokes source.retry() and schedules immediate follow-up.
+    hub.retry();
+    expect(retryFn).toHaveBeenCalledTimes(2);
+    expect(readFn).toHaveBeenCalledTimes(1);
+
+    // Completing the first read immediately triggers the second read without waiting 1500ms.
+    resolvers.shift()!(makeSnapshot(Date.now(), "first"));
+    await Promise.resolve();
+    expect(readFn).toHaveBeenCalledTimes(2);
+    expect(received).toHaveLength(1);
+
+    resolvers.shift()!(makeSnapshot(Date.now(), "second"));
+    await Promise.resolve();
+    expect(received).toHaveLength(2);
+
+    // Retry while waiting on the 1500ms timer triggers an immediate third read.
+    hub.retry();
+    expect(retryFn).toHaveBeenCalledTimes(3);
+    expect(readFn).toHaveBeenCalledTimes(3);
+
+    resolvers.shift()!(makeSnapshot(Date.now(), "third"));
+    await Promise.resolve();
+    expect(received).toHaveLength(3);
+
+    unsub();
+    hub.dispose();
+  });
 });

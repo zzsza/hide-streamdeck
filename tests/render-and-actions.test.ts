@@ -149,6 +149,36 @@ describe("actions with StatusHub", () => {
     expect(hub.getSubscriberCount()).toBe(0);
     hub.dispose();
   });
+
+  it("calls hub.retry() on onKeyDown across all 3 actions", async () => {
+    const hub = new StatusHub({
+      initialSettings: { source: "fake", fakeScenario: "refused" },
+    });
+    const retrySpy = vi.spyOn(hub, "retry");
+
+    const workingAction = new WorkingCountAction(hub);
+    const needsCountAction = new NeedsYouCountAction(hub);
+    const agentAction = new NeedsYouAgentAction(hub);
+
+    const k1 = makeKeyEvent("ctx-1", {});
+    workingAction.onWillAppear(k1.event as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(k1.setImage).toHaveBeenCalledTimes(1);
+
+    workingAction.onKeyDown();
+    expect(retrySpy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(k1.setImage).toHaveBeenCalledTimes(2);
+
+    needsCountAction.onKeyDown();
+    expect(retrySpy).toHaveBeenCalledTimes(2);
+
+    agentAction.onKeyDown();
+    expect(retrySpy).toHaveBeenCalledTimes(3);
+
+    workingAction.onWillDisappear(k1.event as never);
+    hub.dispose();
+  });
 });
 
 describe("manifest and preview generation", () => {

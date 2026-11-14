@@ -94,6 +94,22 @@ describe("FakeHideSource", () => {
   it("registers metadata for every scenario id", () => {
     expect(FAKE_SCENARIOS.length).toBe(14);
   });
+
+  it("switches refused and revoked scenarios to pending after retry()", async () => {
+    const refused = new FakeHideSource({ scenario: "refused" });
+    expect((await refused.read()).connection).toEqual({ kind: "refused" });
+    refused.retry();
+    expect((await refused.read()).connection).toEqual({ kind: "pending" });
+
+    const revoked = new FakeHideSource({ scenario: "revoked" });
+    expect((await revoked.read()).connection).toEqual({ kind: "revoked" });
+    revoked.retry();
+    expect((await revoked.read()).connection).toEqual({ kind: "pending" });
+
+    const notConnected = new FakeHideSource({ scenario: "not-connected" });
+    notConnected.retry();
+    expect((await notConnected.read()).connection).toEqual({ kind: "not_connected" });
+  });
 });
 
 describe("createHideSource", () => {
