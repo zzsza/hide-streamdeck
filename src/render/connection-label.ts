@@ -27,9 +27,11 @@ export function connectionLabel(state: ConnectionState): string | null {
 
 export function connectionHint(state: ConnectionState): string | null {
   switch (state.kind) {
-    case "revoked":
+    case "not_connected":
     case "refused":
-      return "눌러서 다시 요청";
+    case "revoked":
+    case "expired":
+      return "설정에서 연결 요청";
     default:
       return null;
   }

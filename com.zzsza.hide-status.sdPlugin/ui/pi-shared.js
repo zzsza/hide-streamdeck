@@ -5,12 +5,27 @@
     fakeScenario: "needs-you-many",
   };
 
+  const CONNECTION_LABELS = {
+    connected: "연결됨",
+    not_connected: "연결 안 됨",
+    pending: "승인 대기",
+    refused: "거절됨",
+    revoked: "연결 끊김",
+    expired: "요청 만료",
+    hide_unavailable: "Hide 꺼짐",
+    hide_outdated: "Hide 업데이트 필요",
+    hide_missing: "hide 없음",
+    error: "오류",
+  };
+
   let websocket = null;
   let inspectorUuid = "";
+  let actionUuid = "";
   let hasLoadedGlobalSettings = false;
   let storedGlobalSettings = {};
   let pendingGlobalPatch = {};
   let actionSettings = {};
+  let currentConnectionKind = null;
   const actionListeners = [];
   const globalListeners = [];
   const committedValues = new WeakMap();
@@ -19,6 +34,44 @@
     if (websocket && websocket.readyState === WebSocket.OPEN) {
       websocket.send(JSON.stringify(payload));
     }
+  }
+
+  function sendToPlugin(payload) {
+    const message = {
+      event: "sendToPlugin",
+      context: inspectorUuid,
+      payload: payload,
+    };
+    if (actionUuid) {
+      message.action = actionUuid;
+    }
+    send(message);
+  }
+
+  function formatConnectionKind(kind) {
+    if (!kind) {
+      return "확인 중...";
+    }
+    return Object.prototype.hasOwnProperty.call(CONNECTION_LABELS, kind)
+      ? CONNECTION_LABELS[kind]
+      : "오류";
+  }
+
+  function isRequestAccessDisabled(kind) {
+    return kind === "connected" || kind === "pending";
+  }
+
+  function updateConnectionUi() {
+    const label = formatConnectionKind(currentConnectionKind);
+    const disabled = isRequestAccessDisabled(currentConnectionKind);
+
+    document.querySelectorAll("[data-connection-status]").forEach(function (el) {
+      el.textContent = label;
+    });
+
+    document.querySelectorAll("[data-request-access]").forEach(function (btn) {
+      btn.disabled = disabled;
+    });
   }
 
   function effectiveGlobalSettings() {
@@ -143,6 +196,7 @@
   function bindInputs() {
     applyGlobalSettingsToDom();
     applyActionSettingsToDom();
+    updateConnectionUi();
 
     document.querySelectorAll("[data-global-setting]").forEach(function (el) {
       const key = el.getAttribute("data-global-setting");
@@ -161,6 +215,18 @@
         const next = {};
         next[key] = readElementValue(el);
         persistActionSettings(next);
+      });
+    });
+
+    document.querySelectorAll("[data-request-access]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (btn.disabled) {
+          return;
+        }
+        if (effectiveGlobalSettings().source !== "hide") {
+          return;
+        }
+        sendToPlugin({ event: "requestAccess" });
       });
     });
   }
@@ -184,6 +250,13 @@
     onActionSettings: function (listener) {
       actionListeners.push(listener);
     },
+    sendToPlugin: sendToPlugin,
+    requestAccess: function () {
+      sendToPlugin({ event: "requestAccess" });
+    },
+    getConnectionKind: function () {
+      return currentConnectionKind;
+    },
   };
 
   window.connectElgatoStreamDeckSocket = function (
@@ -194,9 +267,13 @@
     inActionInfo
   ) {
     inspectorUuid = inPropertyInspectorUUID;
+    actionUuid = "";
     hasLoadedGlobalSettings = false;
     try {
       const parsedAction = JSON.parse(inActionInfo || "{}");
+      if (parsedAction && typeof parsedAction.action === "string") {
+        actionUuid = parsedAction.action;
+      }
       if (parsedAction && parsedAction.payload && parsedAction.payload.settings) {
         actionSettings = Object.assign({}, parsedAction.payload.settings);
       }
@@ -205,6 +282,7 @@
     }
 
     applyActionSettingsToDom();
+    updateConnectionUi();
 
     websocket = new WebSocket("ws://127.0.0.1:" + inPort);
     websocket.onopen = function () {
@@ -247,6 +325,12 @@
         const incoming = (message.payload && message.payload.settings) || {};
         actionSettings = Object.assign({}, incoming);
         applyActionSettingsToDom();
+      } else if (message.event === "sendToPropertyInspector") {
+        const payload = message.payload;
+        if (payload && payload.event === "connection" && typeof payload.kind === "string") {
+          currentConnectionKind = payload.kind;
+          updateConnectionUi();
+        }
       }
     };
   };
