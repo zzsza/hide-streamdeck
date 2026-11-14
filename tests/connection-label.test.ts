@@ -24,14 +24,14 @@ describe("connectionLabel and connectionHint", () => {
     }
   });
 
-  it("returns retry hint only for refused and revoked states", () => {
+  it("returns settings request hint for not_connected, refused, revoked, and expired states", () => {
     const cases: ReadonlyArray<[ConnectionState, string | null]> = [
       [{ kind: "connected" }, null],
-      [{ kind: "not_connected" }, null],
+      [{ kind: "not_connected" }, "설정에서 연결 요청"],
       [{ kind: "pending" }, null],
-      [{ kind: "refused" }, "눌러서 다시 요청"],
-      [{ kind: "revoked" }, "눌러서 다시 요청"],
-      [{ kind: "expired" }, null],
+      [{ kind: "refused" }, "설정에서 연결 요청"],
+      [{ kind: "revoked" }, "설정에서 연결 요청"],
+      [{ kind: "expired" }, "설정에서 연결 요청"],
       [{ kind: "hide_unavailable" }, null],
       [{ kind: "hide_outdated" }, null],
       [{ kind: "hide_missing" }, null],

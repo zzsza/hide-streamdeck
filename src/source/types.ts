@@ -37,11 +37,10 @@ export interface HideSnapshot {
 export interface HideSource {
   read(): Promise<HideSnapshot>;
   /**
-   * 사용자가 키를 눌렀을 때 호출됨.
-   * 끊김이나 거절 상태면 다음 read에서 접근 요청을 다시 보냄.
-   * 그 밖의 상태에서는 아무것도 하지 않아도 됨.
+   * 사용자가 속성 창에서 연결 요청을 눌렀을 때만 호출됨.
+   * 소스는 이때만 새 승인 요청을 보낼 수 있음.
    */
-  retry?(): void;
+  requestAccess?(): void;
   dispose?(): void;
 }
 

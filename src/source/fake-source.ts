@@ -297,12 +297,19 @@ export interface FakeHideSourceOptions {
 
 export const DEFAULT_CYCLE_STEP_MS = 3_000;
 
+const REQUESTABLE_SCENARIOS: ReadonlySet<FakeScenarioId> = new Set<FakeScenarioId>([
+  "not-connected",
+  "refused",
+  "revoked",
+  "expired",
+]);
+
 export class FakeHideSource implements HideSource {
   readonly scenario: FakeScenarioId;
   private readonly now: () => number;
   private readonly cycleStepMs: number;
   private readonly startedAt: number;
-  private retriedToPending = false;
+  private requestedPending = false;
 
   constructor(options: FakeHideSourceOptions = {}) {
     this.scenario = isFakeScenarioId(options.scenario) ? options.scenario : DEFAULT_FAKE_SCENARIO;
@@ -311,15 +318,15 @@ export class FakeHideSource implements HideSource {
     this.startedAt = this.now();
   }
 
-  retry(): void {
-    if (this.scenario === "refused" || this.scenario === "revoked") {
-      this.retriedToPending = true;
+  requestAccess(): void {
+    if (REQUESTABLE_SCENARIOS.has(this.scenario)) {
+      this.requestedPending = true;
     }
   }
 
   async read(): Promise<HideSnapshot> {
     const readAt = this.now();
-    if (this.retriedToPending && (this.scenario === "refused" || this.scenario === "revoked")) {
+    if (this.requestedPending && REQUESTABLE_SCENARIOS.has(this.scenario)) {
       return buildStaticScenarioSnapshot("pending", readAt);
     }
 

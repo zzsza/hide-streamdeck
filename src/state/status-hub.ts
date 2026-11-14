@@ -36,6 +36,7 @@ export class StatusHub {
   private ready = false;
 
   private readonly listeners = new Set<StatusListener>();
+  private readonly snapshotObservers = new Set<StatusListener>();
   private lastSnapshot: HideSnapshot | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private activeReadGeneration: number | null = null;
@@ -103,13 +104,28 @@ export class StatusHub {
     };
   }
 
-  retry(): void {
+  onSnapshot(observer: StatusListener): () => void {
+    if (this.disposed) {
+      return () => {};
+    }
+    this.snapshotObservers.add(observer);
+    let active = true;
+    return () => {
+      if (!active) {
+        return;
+      }
+      active = false;
+      this.snapshotObservers.delete(observer);
+    };
+  }
+
+  requestAccess(): void {
     if (this.disposed || !this.ready || this.source === null) {
       return;
     }
 
     try {
-      this.source.retry?.();
+      this.source.requestAccess?.();
     } catch (error) {
       this.reportError(error);
     }
@@ -168,6 +184,7 @@ export class StatusHub {
     this.repollGeneration = null;
     this.clearTimer();
     this.listeners.clear();
+    this.snapshotObservers.clear();
 
     const currentSource = this.source;
     this.source = null;
@@ -283,6 +300,12 @@ export class StatusHub {
         continue;
       }
       this.notifySingle(listener, snapshot);
+    }
+    for (const observer of [...this.snapshotObservers]) {
+      if (!this.snapshotObservers.has(observer)) {
+        continue;
+      }
+      this.notifySingle(observer, snapshot);
     }
   }
 
