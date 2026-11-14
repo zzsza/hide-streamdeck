@@ -70,4 +70,8 @@ export class NeedsYouAgentAction extends SingletonAction<NeedsYouAgentSettings> 
       unsubscribe();
     }
   }
+
+  override onKeyDown(): void {
+    this.hub.retry();
+  }
 }
