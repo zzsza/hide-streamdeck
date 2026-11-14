@@ -6,7 +6,7 @@ import {
   type WillDisappearEvent,
 } from "@elgato/streamdeck";
 
-import { renderAgentKey } from "../render/agent-key.js";
+import { normalizeAgentSlot, renderAgentKey } from "../render/agent-key.js";
 import { svgToDataUrl } from "../render/key-svg.js";
 import { StatusHub } from "../state/status-hub.js";
 
@@ -16,11 +16,23 @@ export type NeedsYouAgentSettings = {
   slot?: number;
 };
 
+export interface NormalizedNeedsYouAgentSettings {
+  slot: number;
+}
+
+export function normalizeNeedsYouAgentSettings(
+  raw?: NeedsYouAgentSettings | Record<string, unknown> | null,
+): NormalizedNeedsYouAgentSettings {
+  return {
+    slot: normalizeAgentSlot(raw?.slot),
+  };
+}
+
 @action({ UUID: NEEDS_YOU_AGENT_UUID })
 export class NeedsYouAgentAction extends SingletonAction<NeedsYouAgentSettings> {
   private readonly hub: StatusHub;
   private readonly subscriptions = new Map<string, () => void>();
-  private readonly settingsByContext = new Map<string, NeedsYouAgentSettings>();
+  private readonly settingsByContext = new Map<string, NormalizedNeedsYouAgentSettings>();
 
   constructor(hub: StatusHub) {
     super();
@@ -29,12 +41,12 @@ export class NeedsYouAgentAction extends SingletonAction<NeedsYouAgentSettings> 
 
   override onWillAppear(ev: WillAppearEvent<NeedsYouAgentSettings>): void {
     this.subscriptions.get(ev.action.id)?.();
-    this.settingsByContext.set(ev.action.id, ev.payload.settings);
+    this.settingsByContext.set(ev.action.id, normalizeNeedsYouAgentSettings(ev.payload.settings));
 
     const unsubscribe = this.hub.subscribe((snapshot) => {
       if (ev.action.isKey()) {
         const currentSettings = this.settingsByContext.get(ev.action.id);
-        const svg = renderAgentKey(snapshot, { slot: currentSettings?.slot });
+        const svg = renderAgentKey(snapshot, { slot: currentSettings?.slot ?? 1 });
         void ev.action.setImage(svgToDataUrl(svg));
       }
     });
@@ -43,10 +55,11 @@ export class NeedsYouAgentAction extends SingletonAction<NeedsYouAgentSettings> 
   }
 
   override onDidReceiveSettings(ev: DidReceiveSettingsEvent<NeedsYouAgentSettings>): void {
-    this.settingsByContext.set(ev.action.id, ev.payload.settings);
+    const normalized = normalizeNeedsYouAgentSettings(ev.payload.settings);
+    this.settingsByContext.set(ev.action.id, normalized);
     const snapshot = this.hub.getLastSnapshot();
     if (snapshot !== null && ev.action.isKey()) {
-      const svg = renderAgentKey(snapshot, { slot: ev.payload.settings.slot });
+      const svg = renderAgentKey(snapshot, { slot: normalized.slot });
       void ev.action.setImage(svgToDataUrl(svg));
     }
   }
