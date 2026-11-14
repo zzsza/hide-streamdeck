@@ -7,6 +7,7 @@ import {
 import { DEFAULT_HIDE_PATH, type HideSnapshot, type HideSource } from "./types.js";
 
 export const DEFAULT_EXEC_TIMEOUT_MS = 5_000;
+export const DEFAULT_READ_TIMEOUT_MS = 10_000;
 
 export interface HideExecOptions {
   env: Record<string, string>;
@@ -31,6 +32,7 @@ export interface HideCliSourceOptions {
   exec?: HideExec;
   now?: () => number;
   timeoutMs?: number;
+  readTimeoutMs?: number;
 }
 
 function createAbortError(reason?: unknown): Error {
@@ -112,6 +114,7 @@ export class HideCliSource implements HideSource {
   readonly exec: HideExec;
   private readonly now: () => number;
   private readonly timeoutMs: number;
+  private readonly readTimeoutMs: number;
   private readonly accessMachine: HideAccessStateMachine;
 
   private activeAbortController: AbortController | null = null;
@@ -123,6 +126,11 @@ export class HideCliSource implements HideSource {
     this.exec = options.exec ?? defaultHideExec;
     this.now = options.now ?? Date.now;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
+    this.readTimeoutMs =
+      options.readTimeoutMs ??
+      (options.timeoutMs !== undefined
+        ? Math.max(options.timeoutMs, options.timeoutMs * 2)
+        : DEFAULT_READ_TIMEOUT_MS);
     this.accessMachine = new HideAccessStateMachine(this.now);
   }
 
@@ -161,7 +169,10 @@ export class HideCliSource implements HideSource {
       };
     }
 
-    const result = await this.accessMachine.poll((args) => this.runCommand(args));
+    const readDeadline = Date.now() + this.readTimeoutMs;
+    const result = await this.accessMachine.poll((args) =>
+      this.runCommand(args, readDeadline),
+    );
     return {
       connection: result.connection,
       agents: result.agents,
@@ -169,10 +180,19 @@ export class HideCliSource implements HideSource {
     };
   }
 
-  private async runCommand(args: readonly string[]): Promise<HideExecResult> {
+  private async runCommand(
+    args: readonly string[],
+    readDeadline: number,
+  ): Promise<HideExecResult> {
     if (this.disposed) {
       throw createAbortError("Source has been disposed");
     }
+
+    const remainingReadMs = readDeadline - Date.now();
+    if (remainingReadMs <= 0) {
+      throw new Error(`hide read timed out after ${this.readTimeoutMs}ms`);
+    }
+    const effectiveTimeoutMs = Math.min(this.timeoutMs, remainingReadMs);
 
     const controller = new AbortController();
     this.activeAbortController = controller;
@@ -183,7 +203,7 @@ export class HideCliSource implements HideSource {
     try {
       const execPromise = this.exec(this.hidePath, [...args], {
         env: buildHideExecEnv(),
-        timeoutMs: this.timeoutMs,
+        timeoutMs: effectiveTimeoutMs,
         signal: controller.signal,
       });
       // Avoid unhandled rejection if the underlying exec rejects after abort/timeout settles the race.
@@ -201,11 +221,11 @@ export class HideCliSource implements HideSource {
       const timeoutPromise = new Promise<never>((_resolve, reject) => {
         timeoutId = setTimeout(() => {
           const timeoutError = new Error(
-            `hide command timed out after ${this.timeoutMs}ms`,
+            `hide command timed out after ${effectiveTimeoutMs}ms`,
           );
           controller.abort(timeoutError);
           reject(timeoutError);
-        }, this.timeoutMs + 50);
+        }, effectiveTimeoutMs + 50);
       });
 
       return await Promise.race([execPromise, abortPromise, timeoutPromise]);

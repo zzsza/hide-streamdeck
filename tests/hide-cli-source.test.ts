@@ -535,6 +535,28 @@ describe("HideCliSource", () => {
       expect(snap.connection.message).toContain("timed out");
     }
 
+    // Overall readTimeoutMs caps multi-command reads
+    const slowMultiCommandExec: HideExec = vi.fn(
+      (_file, args) =>
+        new Promise<HideExecResult>((resolve) => {
+          const delay = args[1] === "status" ? 300 : 1_000;
+          setTimeout(() => resolve(okJson({ state: "not_connected" })), delay);
+        }),
+    );
+    const cappedSource = new HideCliSource({
+      exec: slowMultiCommandExec,
+      timeoutMs: 500,
+      readTimeoutMs: 600,
+      now: () => Date.now(),
+    });
+    const cappedPromise = cappedSource.read();
+    await vi.advanceTimersByTimeAsync(700);
+    const cappedSnap = await cappedPromise;
+    expect(cappedSnap.connection.kind).toBe("error");
+    if (cappedSnap.connection.kind === "error") {
+      expect(cappedSnap.connection.message).toContain("timed out");
+    }
+
     // Global settings switch between fake and hide sources and propagate custom hidePath
     const stubExec = vi.fn<HideExec>(async (_file, args) => {
       if (args[0] === "access") return okJson({ state: "connected" });
