@@ -160,7 +160,11 @@ describe("renderCountKey", () => {
 
         if (hint !== null) {
           expect(svg).toContain(`>${hint}</text>`);
-          const statusMatch = svg.match(/y="(\d+)"[^>]*font-size="(\d+)"[^>]*>(?:거절됨|연결 끊김)<\/text><text x="72" y="(\d+)"[^>]*font-size="(\d+)"[^>]*>눌러서 다시 요청<\/text>/);
+          const statusMatch = svg.match(
+            new RegExp(
+              `y="(\\d+)"[^>]*font-size="(\\d+)"[^>]*>${label}<\\/text><text x="72" y="(\\d+)"[^>]*font-size="(\\d+)"[^>]*>${hint}<\\/text>`,
+            ),
+          );
           expect(statusMatch).not.toBeNull();
           const statusY = Number(statusMatch?.[1]);
           const statusFont = Number(statusMatch?.[2]);
@@ -170,7 +174,7 @@ describe("renderCountKey", () => {
           expect(hintFont).toBeLessThan(statusFont);
           expect(hintFont).toBeLessThanOrEqual(14);
         } else {
-          expect(svg).not.toContain("눌러서 다시 요청");
+          expect(svg).not.toContain("설정에서 연결 요청");
         }
       }
     }
@@ -244,14 +248,28 @@ describe("preview output for count keys", () => {
 
     expect(svgs.some((svg) => svg.includes(">Working</text>") && svg.includes(">3</text>"))).toBe(true);
     expect(svgs.some((svg) => svg.includes(">Needs You</text>") && svg.includes('fill="#d92d20"'))).toBe(true);
-    expect(svgs.some((svg) => svg.includes(">Working</text>") && svg.includes(">연결 안 됨</text>"))).toBe(true);
-    expect(svgs.some((svg) => svg.includes(">Needs You</text>") && svg.includes(">승인 대기</text>"))).toBe(true);
+    expect(
+      svgs.some(
+        (svg) =>
+          svg.includes(">Working</text>") &&
+          svg.includes(">연결 안 됨</text>") &&
+          svg.includes(">설정에서 연결 요청</text>"),
+      ),
+    ).toBe(true);
+    expect(
+      svgs.some(
+        (svg) =>
+          svg.includes(">Needs You</text>") &&
+          svg.includes(">승인 대기</text>") &&
+          !svg.includes(">설정에서 연결 요청</text>"),
+      ),
+    ).toBe(true);
     expect(
       svgs.some(
         (svg) =>
           svg.includes(">Working</text>") &&
           svg.includes(">연결 끊김</text>") &&
-          svg.includes(">눌러서 다시 요청</text>"),
+          svg.includes(">설정에서 연결 요청</text>"),
       ),
     ).toBe(true);
     expect(
@@ -259,7 +277,15 @@ describe("preview output for count keys", () => {
         (svg) =>
           svg.includes(">Needs You</text>") &&
           svg.includes(">거절됨</text>") &&
-          svg.includes(">눌러서 다시 요청</text>"),
+          svg.includes(">설정에서 연결 요청</text>"),
+      ),
+    ).toBe(true);
+    expect(
+      svgs.some(
+        (svg) =>
+          svg.includes(">Working</text>") &&
+          svg.includes(">요청 만료</text>") &&
+          svg.includes(">설정에서 연결 요청</text>"),
       ),
     ).toBe(true);
   });

@@ -73,7 +73,11 @@ function getStatusLayout(text: string, hasHint: boolean): { fontSize: number; y:
 }
 
 function getHintFontSize(text: string): number {
-  return Array.from(text).length > 10 ? 12 : 14;
+  const charCount = Array.from(text).length;
+  if (charCount > 12) {
+    return 12;
+  }
+  return charCount >= 10 ? 13 : 14;
 }
 
 function getConnectedTheme(kind: CountKeyKind, count: number): CountKeyTheme {
