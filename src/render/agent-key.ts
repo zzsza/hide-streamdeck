@@ -243,8 +243,7 @@ export function formatAgentStateLabel(state: string): string {
   }
 }
 
-function renderDisconnectedAgentKey(snapshot: HideSnapshot, slot: number): string {
-  const label = connectionLabel(snapshot.connection);
+function renderDisconnectedAgentKey(label: string, slot: number): string {
   const labelLines = wrapTextLines(label, {
     maxWidth: 116,
     maxLines: 3,
@@ -334,8 +333,9 @@ export function renderAgentKey(
 ): string {
   const slot = normalizeAgentSlot(options.slot);
 
-  if (snapshot.connection.kind !== "connected") {
-    return renderDisconnectedAgentKey(snapshot, slot);
+  const disconnectedLabel = connectionLabel(snapshot.connection);
+  if (disconnectedLabel !== null) {
+    return renderDisconnectedAgentKey(disconnectedLabel, slot);
   }
 
   const agent = selectNeedsYouAgent(snapshot, slot);

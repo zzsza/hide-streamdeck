@@ -192,7 +192,7 @@ describe("renderAgentKey", () => {
         connection,
       );
       const svg = renderAgentKey(snap, { slot: 1 });
-      const expectedLabel = connectionLabel(connection);
+      const expectedLabel = connectionLabel(connection) ?? "";
       const texts = extractTextContents(svg);
       const bodyTexts = texts.filter((t) => t !== "#1");
 
