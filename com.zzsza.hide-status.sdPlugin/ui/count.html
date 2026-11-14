@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hide Status Count Settings</title>
+    <link rel="stylesheet" href="./pi-shared.css" />
+    <script src="./pi-shared.js" defer></script>
+  </head>
+  <body>
+    <main class="pi-section">
+      <div class="pi-heading">Data Source (Global)</div>
+
+      <div class="pi-row">
+        <label for="source">Source</label>
+        <select id="source" data-global-setting="source">
+          <option value="hide">Hide CLI (live)</option>
+          <option value="fake">Fake scenario</option>
+        </select>
+      </div>
+
+      <div class="pi-row" data-visible-when-source="hide">
+        <label for="hidePath">Hide Path</label>
+        <input
+          id="hidePath"
+          type="text"
+          data-global-setting="hidePath"
+          placeholder="/Applications/hide.app/Contents/Resources/hide"
+        />
+        <div class="pi-hint">Path to the Hide CLI binary.</div>
+      </div>
+
+      <div class="pi-row" data-visible-when-source="fake">
+        <label for="fakeScenario">Scenario</label>
+        <select id="fakeScenario" data-global-setting="fakeScenario">
+          <option value="empty">0 agents (empty)</option>
+          <option value="working-many">Multiple working</option>
+          <option value="needs-you-one">1 Needs You</option>
+          <option value="needs-you-many">Multiple Needs You (long text)</option>
+          <option value="not-connected">Not connected</option>
+          <option value="pending">Pending approval</option>
+          <option value="hide-unavailable">Hide unavailable</option>
+          <option value="cycling">Cycling over time</option>
+        </select>
+      </div>
+    </main>
+  </body>
+</html>
