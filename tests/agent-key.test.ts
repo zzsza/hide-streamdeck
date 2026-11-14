@@ -290,7 +290,7 @@ describe("renderAgentKey", () => {
         expect(bodyTexts.join(" ")).toContain(expectedHint);
         expect(estimateTextWidth(expectedHint, 11, false)).toBeLessThanOrEqual(116);
       } else {
-        expect(bodyTexts.join(" ")).not.toContain("눌러서 다시 요청");
+        expect(bodyTexts.join(" ")).not.toContain("설정에서 연결 요청");
       }
     }
   });
