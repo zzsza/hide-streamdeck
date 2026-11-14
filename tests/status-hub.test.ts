@@ -260,21 +260,21 @@ describe("StatusHub", () => {
     hub.dispose();
   });
 
-  it("retry() is a no-op before ready, polls immediately when idle, and queues one immediate follow-up read when in-flight", async () => {
-    const preReadyRetry = vi.fn();
+  it("requestAccess() is a no-op before ready, polls immediately when idle, and queues one immediate follow-up read when in-flight", async () => {
+    const preReadyRequest = vi.fn();
     const preReadyRead = vi.fn(async () => makeSnapshot(Date.now()));
     const preReadyHub = new StatusHub({
-      sourceFactory: () => ({ read: preReadyRead, retry: preReadyRetry }),
+      sourceFactory: () => ({ read: preReadyRead, requestAccess: preReadyRequest }),
     });
     const unsubPre = preReadyHub.subscribe(() => {});
-    preReadyHub.retry();
-    expect(preReadyRetry).not.toHaveBeenCalled();
+    preReadyHub.requestAccess();
+    expect(preReadyRequest).not.toHaveBeenCalled();
     expect(preReadyRead).not.toHaveBeenCalled();
     unsubPre();
     preReadyHub.dispose();
 
     const resolvers: Array<(snap: HideSnapshot) => void> = [];
-    const retryFn = vi.fn();
+    const requestAccessFn = vi.fn();
     const readFn = vi.fn(
       () =>
         new Promise<HideSnapshot>((resolve) => {
@@ -284,21 +284,25 @@ describe("StatusHub", () => {
 
     const hub = new StatusHub({
       initialSettings: { source: "fake" },
-      sourceFactory: () => ({ read: readFn, retry: retryFn }),
+      sourceFactory: () => ({ read: readFn, requestAccess: requestAccessFn }),
     });
 
-    // Retry while ready with 0 subscribers: invokes source.retry() without polling.
-    hub.retry();
-    expect(retryFn).toHaveBeenCalledTimes(1);
+    const observed: HideSnapshot[] = [];
+    const unobserve = hub.onSnapshot((s) => observed.push(s));
+    expect(hub.getSubscriberCount()).toBe(0);
+
+    // requestAccess while ready with 0 subscribers: invokes source.requestAccess() without polling.
+    hub.requestAccess();
+    expect(requestAccessFn).toHaveBeenCalledTimes(1);
     expect(readFn).not.toHaveBeenCalled();
 
     const received: HideSnapshot[] = [];
     const unsub = hub.subscribe((s) => received.push(s));
     expect(readFn).toHaveBeenCalledTimes(1);
 
-    // Retry while first read is in-flight: invokes source.retry() and schedules immediate follow-up.
-    hub.retry();
-    expect(retryFn).toHaveBeenCalledTimes(2);
+    // requestAccess while first read is in-flight: invokes source.requestAccess() and schedules immediate follow-up.
+    hub.requestAccess();
+    expect(requestAccessFn).toHaveBeenCalledTimes(2);
     expect(readFn).toHaveBeenCalledTimes(1);
 
     // Completing the first read immediately triggers the second read without waiting 1500ms.
@@ -306,20 +310,24 @@ describe("StatusHub", () => {
     await Promise.resolve();
     expect(readFn).toHaveBeenCalledTimes(2);
     expect(received).toHaveLength(1);
+    expect(observed).toHaveLength(1);
 
     resolvers.shift()!(makeSnapshot(Date.now(), "second"));
     await Promise.resolve();
     expect(received).toHaveLength(2);
+    expect(observed).toHaveLength(2);
 
-    // Retry while waiting on the 1500ms timer triggers an immediate third read.
-    hub.retry();
-    expect(retryFn).toHaveBeenCalledTimes(3);
+    // requestAccess while waiting on the 1500ms timer triggers an immediate third read.
+    hub.requestAccess();
+    expect(requestAccessFn).toHaveBeenCalledTimes(3);
     expect(readFn).toHaveBeenCalledTimes(3);
 
     resolvers.shift()!(makeSnapshot(Date.now(), "third"));
     await Promise.resolve();
     expect(received).toHaveLength(3);
+    expect(observed).toHaveLength(3);
 
+    unobserve();
     unsub();
     hub.dispose();
   });

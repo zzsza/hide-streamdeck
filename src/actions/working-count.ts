@@ -52,8 +52,4 @@ export class WorkingCountAction extends SingletonAction {
       unsubscribe();
     }
   }
-
-  override onKeyDown(): void {
-    this.hub.retry();
-  }
 }

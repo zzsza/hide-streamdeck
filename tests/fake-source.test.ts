@@ -95,20 +95,24 @@ describe("FakeHideSource", () => {
     expect(FAKE_SCENARIOS.length).toBe(14);
   });
 
-  it("switches refused and revoked scenarios to pending after retry()", async () => {
-    const refused = new FakeHideSource({ scenario: "refused" });
-    expect((await refused.read()).connection).toEqual({ kind: "refused" });
-    refused.retry();
-    expect((await refused.read()).connection).toEqual({ kind: "pending" });
+  it("switches not-connected, refused, revoked, and expired scenarios to pending after requestAccess()", async () => {
+    const requestableCases = [
+      ["not-connected", "not_connected"],
+      ["refused", "refused"],
+      ["revoked", "revoked"],
+      ["expired", "expired"],
+    ] as const;
 
-    const revoked = new FakeHideSource({ scenario: "revoked" });
-    expect((await revoked.read()).connection).toEqual({ kind: "revoked" });
-    revoked.retry();
-    expect((await revoked.read()).connection).toEqual({ kind: "pending" });
+    for (const [scenario, initialKind] of requestableCases) {
+      const source = new FakeHideSource({ scenario });
+      expect((await source.read()).connection).toEqual({ kind: initialKind });
+      source.requestAccess();
+      expect((await source.read()).connection).toEqual({ kind: "pending" });
+    }
 
-    const notConnected = new FakeHideSource({ scenario: "not-connected" });
-    notConnected.retry();
-    expect((await notConnected.read()).connection).toEqual({ kind: "not_connected" });
+    const unavailable = new FakeHideSource({ scenario: "hide-unavailable" });
+    unavailable.requestAccess();
+    expect((await unavailable.read()).connection).toEqual({ kind: "hide_unavailable" });
   });
 });
 
