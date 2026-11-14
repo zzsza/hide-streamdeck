@@ -39,6 +39,7 @@ export class StatusHub {
   private lastSnapshot: HideSnapshot | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private activeReadGeneration: number | null = null;
+  private repollGeneration: number | null = null;
   private disposed = false;
 
   constructor(options: StatusHubOptions = {}) {
@@ -96,9 +97,35 @@ export class StatusHub {
       active = false;
       this.listeners.delete(listener);
       if (this.listeners.size === 0) {
+        this.repollGeneration = null;
         this.clearTimer();
       }
     };
+  }
+
+  retry(): void {
+    if (this.disposed || !this.ready || this.source === null) {
+      return;
+    }
+
+    try {
+      this.source.retry?.();
+    } catch (error) {
+      this.reportError(error);
+    }
+
+    if (this.listeners.size === 0) {
+      return;
+    }
+
+    this.clearTimer();
+    if (this.activeReadGeneration === this.sourceGeneration) {
+      this.repollGeneration = this.sourceGeneration;
+      return;
+    }
+
+    this.repollGeneration = null;
+    void this.runPoll();
   }
 
   updateSettings(rawSettings?: GlobalSettings | null): void {
@@ -115,6 +142,7 @@ export class StatusHub {
     this.ready = true;
     this.settings = nextSettings;
     this.sourceGeneration += 1;
+    this.repollGeneration = null;
     this.lastSnapshot = null;
     this.clearTimer();
 
@@ -137,6 +165,7 @@ export class StatusHub {
     this.ready = false;
     this.sourceGeneration += 1;
     this.activeReadGeneration = null;
+    this.repollGeneration = null;
     this.clearTimer();
     this.listeners.clear();
 
@@ -215,6 +244,7 @@ export class StatusHub {
     this.lastSnapshot = snapshot;
 
     if (this.listeners.size === 0) {
+      this.repollGeneration = null;
       return;
     }
 
@@ -225,6 +255,16 @@ export class StatusHub {
       capturedGeneration !== this.sourceGeneration ||
       this.listeners.size === 0
     ) {
+      return;
+    }
+
+    if (this.repollGeneration === capturedGeneration) {
+      this.repollGeneration = null;
+      void this.runPoll();
+      return;
+    }
+
+    if (this.activeReadGeneration === capturedGeneration) {
       return;
     }
 

@@ -24,3 +24,13 @@ export function connectionLabel(state: ConnectionState): string | null {
       return "오류";
   }
 }
+
+export function connectionHint(state: ConnectionState): string | null {
+  switch (state.kind) {
+    case "revoked":
+    case "refused":
+      return "눌러서 다시 요청";
+    default:
+      return null;
+  }
+}
