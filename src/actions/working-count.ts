@@ -26,6 +26,10 @@ export class WorkingCountAction extends SingletonAction {
     this.subscriptions.get(ev.action.id)?.();
     this.lastSvgByContext.delete(ev.action.id);
 
+    if (ev.action.isKey() && typeof ev.action.setTitle === "function") {
+      void ev.action.setTitle("");
+    }
+
     const unsubscribe = this.hub.subscribe((snapshot) => {
       if (ev.action.isKey()) {
         const svg = renderWorkingCountKey(snapshot);
