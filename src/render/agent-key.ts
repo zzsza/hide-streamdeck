@@ -1,6 +1,6 @@
 import type { AgentRow, HideSnapshot } from "../source/types.js";
 import { summarize } from "../state/classify.js";
-import { connectionLabel } from "./connection-label.js";
+import { connectionHint, connectionLabel } from "./connection-label.js";
 import { createKeySvg, escapeXml } from "./key-svg.js";
 
 const FONT_FAMILY = "-apple-system, BlinkMacSystemFont, sans-serif";
@@ -276,19 +276,38 @@ export function formatAgentStateLabel(state: string): string {
   }
 }
 
-function renderDisconnectedAgentKey(label: string, slot: number): string {
+function renderDisconnectedAgentKey(label: string, hint: string | null, slot: number): string {
   const labelLines = wrapTextLines(label, {
     maxWidth: 116,
-    maxLines: 3,
+    maxLines: hint !== null ? 2 : 3,
     fontSize: 13,
     bold: false,
   });
 
-  const startY = 74 - ((labelLines.length - 1) * LINE_LINE_HEIGHT) / 2;
-  const textNodes = labelLines
+  const hintLines =
+    hint !== null
+      ? wrapTextLines(hint, {
+          maxWidth: 116,
+          maxLines: 2,
+          fontSize: 11,
+          bold: false,
+        })
+      : [];
+
+  const labelStartY =
+    (hintLines.length > 0 ? 64 : 74) - ((labelLines.length - 1) * LINE_LINE_HEIGHT) / 2;
+  const labelNodes = labelLines
     .map(
       (line, idx) =>
-        `<text x="72" y="${startY + idx * LINE_LINE_HEIGHT}" text-anchor="middle" fill="#94a3b8" font-family="${FONT_FAMILY}" font-size="13">${escapeXml(line)}</text>`,
+        `<text x="72" y="${labelStartY + idx * LINE_LINE_HEIGHT}" text-anchor="middle" fill="#94a3b8" font-family="${FONT_FAMILY}" font-size="13">${escapeXml(line)}</text>`,
+    )
+    .join("");
+
+  const hintStartY = labelStartY + (labelLines.length - 1) * LINE_LINE_HEIGHT + 22;
+  const hintNodes = hintLines
+    .map(
+      (line, idx) =>
+        `<text x="72" y="${hintStartY + idx * 14}" text-anchor="middle" fill="#64748b" font-family="${FONT_FAMILY}" font-size="11">${escapeXml(line)}</text>`,
     )
     .join("");
 
@@ -298,7 +317,7 @@ function renderDisconnectedAgentKey(label: string, slot: number): string {
     background: "#12141a",
     borderColor: "#272b36",
     borderWidth: 2,
-    body: `${textNodes}${slotBadge}`,
+    body: `${labelNodes}${hintNodes}${slotBadge}`,
   });
 }
 
@@ -368,7 +387,11 @@ export function renderAgentKey(
 
   const disconnectedLabel = connectionLabel(snapshot.connection);
   if (disconnectedLabel !== null) {
-    return renderDisconnectedAgentKey(disconnectedLabel, slot);
+    return renderDisconnectedAgentKey(
+      disconnectedLabel,
+      connectionHint(snapshot.connection),
+      slot,
+    );
   }
 
   const agent = selectNeedsYouAgent(snapshot, slot);

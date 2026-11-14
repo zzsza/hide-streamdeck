@@ -14,7 +14,7 @@ import {
   selectNeedsYouAgent,
   wrapTextLines,
 } from "../src/render/agent-key.js";
-import { connectionLabel } from "../src/render/connection-label.js";
+import { connectionHint, connectionLabel } from "../src/render/connection-label.js";
 import { KEY_SIZE } from "../src/render/key-svg.js";
 import { FakeHideSource } from "../src/source/fake-source.js";
 import type { AgentRow, ConnectionState, HideSnapshot } from "../src/source/types.js";
@@ -276,15 +276,22 @@ describe("renderAgentKey", () => {
       );
       const svg = renderAgentKey(snap, { slot: 1 });
       const expectedLabel = connectionLabel(connection) ?? "";
+      const expectedHint = connectionHint(connection);
       const texts = extractTextContents(svg);
       const bodyTexts = texts.filter((t) => t !== "#1");
 
       expect(svg).not.toContain("#ef4444");
       expect(svg).not.toContain("Should stay hidden");
       expect(bodyTexts.length).toBeGreaterThan(0);
-      expect(bodyTexts.length).toBeLessThanOrEqual(3);
+      expect(bodyTexts.length).toBeLessThanOrEqual(expectedHint !== null ? 4 : 3);
       expect(expectedLabel.length).toBeGreaterThan(0);
       expect(bodyTexts[0]?.slice(0, 4)).toBe(expectedLabel.slice(0, 4));
+      if (expectedHint !== null) {
+        expect(bodyTexts.join(" ")).toContain(expectedHint);
+        expect(estimateTextWidth(expectedHint, 11, false)).toBeLessThanOrEqual(116);
+      } else {
+        expect(bodyTexts.join(" ")).not.toContain("눌러서 다시 요청");
+      }
     }
   });
 
