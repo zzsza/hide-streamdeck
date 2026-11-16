@@ -1,0 +1,7 @@
+node_modules/
+dist/
+preview/
+com.zzsza.hide-status.sdPlugin/bin/
+com.zzsza.hide-status.sdPlugin/logs/
+.DS_Store
+*.log

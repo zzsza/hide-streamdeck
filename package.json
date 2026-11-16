@@ -1,0 +1,31 @@
+{
+  "name": "hide-streamdeck",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Elgato Stream Deck plugin displaying Hide agent status",
+  "scripts": {
+    "build": "rollup -c",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "validate": "streamdeck validate com.zzsza.hide-status.sdPlugin",
+    "pack": "mkdir -p dist && streamdeck pack com.zzsza.hide-status.sdPlugin -o dist --force",
+    "preview": "tsx scripts/preview.ts"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "^3.0.4"
+  },
+  "devDependencies": {
+    "@elgato/cli": "^1.10.4",
+    "@rollup/plugin-commonjs": "^29.0.3",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-typescript": "^12.3.1",
+    "@types/node": "^24.12.0",
+    "rollup": "^4.68.3",
+    "tslib": "^2.8.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

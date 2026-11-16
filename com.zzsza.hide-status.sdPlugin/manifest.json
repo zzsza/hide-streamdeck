@@ -1,0 +1,80 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "Name": "Hide Status",
+  "Version": "0.1.0.0",
+  "Author": "zzsza",
+  "Actions": [
+    {
+      "Name": "Working Count",
+      "UUID": "com.zzsza.hide-status.working-count",
+      "Icon": "imgs/actions/working-count/icon",
+      "Tooltip": "Displays the number of working Hide agents.",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "Needs You Count",
+      "UUID": "com.zzsza.hide-status.needs-you-count",
+      "Icon": "imgs/actions/needs-you-count/icon",
+      "Tooltip": "Displays the number of Hide agents waiting on you.",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/needs-you-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "Needs You Agent",
+      "UUID": "com.zzsza.hide-status.needs-you-agent",
+      "Icon": "imgs/actions/needs-you-agent/icon",
+      "Tooltip": "Displays one Hide agent waiting on you at the configured slot.",
+      "PropertyInspectorPath": "ui/needs-you-agent.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/needs-you-agent/key",
+          "ShowTitle": false
+        }
+      ]
+    }
+  ],
+  "Category": "Hide Status",
+  "CategoryIcon": "imgs/plugin/category-icon",
+  "CodePath": "bin/plugin.js",
+  "Description": "Status dashboard keys for Hide coding agents.",
+  "Icon": "imgs/plugin/icon",
+  "SDKVersion": 3,
+  "Software": {
+    "MinimumVersion": "7.1"
+  },
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "13"
+    },
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Nodejs": {
+    "Version": "24",
+    "Debug": "enabled"
+  },
+  "UUID": "com.zzsza.hide-status"
+}
