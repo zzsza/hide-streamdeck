@@ -4,6 +4,7 @@ import { normalizeGlobalSettings, type GlobalSettings, type HideSource } from ".
 
 export * from "./types.js";
 export * from "./fake-source.js";
+export * from "./hide-access.js";
 export * from "./hide-cli-source.js";
 
 export interface CreateHideSourceDeps {

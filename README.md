@@ -17,7 +17,7 @@ Elgato Stream Deck plugin (`com.zzsza.hide-status`) that displays Hide coding ag
 - `src/`
   - `plugin.ts`: Plugin entry point wiring global settings, shared `StatusHub`, and the 3 actions
   - `actions/`: `working-count.ts`, `needs-you-count.ts`, `needs-you-agent.ts`
-  - `source/`: `types.ts`, `fake-source.ts`, `hide-cli-source.ts`, `index.ts` (`createHideSource`)
+  - `source/`: `types.ts`, `fake-source.ts`, `hide-access.ts`, `hide-cli-source.ts`, `index.ts` (`createHideSource`)
   - `state/`: `classify.ts` (`classify`, `summarize`), `status-hub.ts` (`StatusHub`)
   - `render/`: `key-svg.ts`, `count-key.ts`, `agent-key.ts`
 - `scripts/preview.ts`: Renders every key across all fake scenarios into `preview/index.html` (gitignored)
@@ -73,8 +73,12 @@ export interface HideSource {
 - `pending`: Access request is waiting for operator approval in Hide
 - `refused`: Operator refused the access request
 - `revoked`: Previously granted access was revoked
-- `expired`: Access grant expired and must be renewed
+- `expired`: Pending access request was dropped (for example, Hide restarted or pending queue evicted it)
 - `hide_unavailable`: Hide application is not currently running
-- `hide_outdated`: Installed `hide` binary lacks the `access` command
+- `hide_outdated`: Installed `hide` binary lacks the `access` command (update Hide to a version supporting `hide access`)
 - `hide_missing`: Configured `hidePath` binary was not found
 - `error`: Unexpected failure with a diagnostic `message`
+
+## Connecting to Hide
+
+When the data source is set to `Hide CLI (live)` (default), the plugin runs `hide access status --json` with `HIDE_ACCESS=streamdeck`. It never creates a new approval request automatically: when not yet connected (`not_connected`), disconnected (`revoked`), refused (`refused`), expired (`expired`), or unreadable (`error`), open the Stream Deck Property Inspector and click **Hide에 연결 요청** once to send `hide access request --name streamdeck --json` (and clear any stale key file). Then open Hide and approve the `streamdeck` request under **Settings › External tools** with **View only** access. While approval is pending, the plugin polls `hide access request --name streamdeck --json` at least every 3 seconds; once approved, that call exchanges the pending request for a private key and the plugin begins polling `hide ps --json` every 1.5 seconds. If `hide_outdated` is shown, update Hide to a version that includes `hide access`. You can switch between `Hide CLI (live)` and `Fake scenario`, or change `Hide Path`, at any time in the Stream Deck Property Inspector's global settings.
