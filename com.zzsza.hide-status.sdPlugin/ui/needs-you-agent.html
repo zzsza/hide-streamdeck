@@ -8,11 +8,21 @@
   </head>
   <body>
     <main class="pi-section">
-      <!--
-        TODO(agent-key): Add the slot number input for Needs You Agent action settings here.
-        Inputs with data-action-setting="<settingKey>" automatically sync with per-key settings via pi-shared.js,
-        or use window.hidePropertyInspector.getActionSettings() / setActionSettings(patch).
-      -->
+      <div class="pi-heading">Key Settings</div>
+
+      <div class="pi-row">
+        <label for="slot">Slot</label>
+        <input
+          id="slot"
+          type="number"
+          min="1"
+          max="20"
+          step="1"
+          data-action-setting="slot"
+          data-default="1"
+        />
+        <div class="pi-hint">1-based Needs You slot number (1 to 20).</div>
+      </div>
 
       <div class="pi-heading">Data Source (Global)</div>
 
@@ -74,5 +84,35 @@
         </button>
       </div>
     </main>
+    <script>
+      (function () {
+        var slotInput = document.getElementById("slot");
+        if (!slotInput) return;
+
+        function isValidSlot(raw) {
+          var trimmed = String(raw).trim();
+          if (trimmed === "") return true;
+          var parsed = Number(trimmed);
+          return Number.isInteger(parsed) && parsed >= 1 && parsed <= 20;
+        }
+
+        function guardSlotInput() {
+          if (isValidSlot(slotInput.value)) {
+            return;
+          }
+          var saved =
+            window.hidePropertyInspector &&
+            window.hidePropertyInspector.getActionSettings().slot;
+          var fallback =
+            typeof saved === "number" && Number.isInteger(saved) && saved >= 1 && saved <= 20
+              ? String(saved)
+              : slotInput.getAttribute("data-default") || "1";
+          slotInput.value = fallback;
+        }
+
+        slotInput.addEventListener("change", guardSlotInput, true);
+        slotInput.addEventListener("blur", guardSlotInput, true);
+      })();
+    </script>
   </body>
 </html>

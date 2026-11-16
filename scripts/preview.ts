@@ -26,15 +26,27 @@ export async function generatePreviewHtml(): Promise<string> {
       { label: "Needs You Count", svg: renderNeedsYouCountKey(snapshot) },
       { label: "Needs You Agent (slot 1)", svg: renderAgentKey(snapshot, { slot: 1 }) },
       { label: "Needs You Agent (slot 2)", svg: renderAgentKey(snapshot, { slot: 2 }) },
+      ...(scenario.id === "needs-you-many"
+        ? [
+            { label: "Needs You Agent (slot 3)", svg: renderAgentKey(snapshot, { slot: 3 }) },
+            { label: "Needs You Agent (slot 5)", svg: renderAgentKey(snapshot, { slot: 5 }) },
+          ]
+        : []),
     ];
 
     const cardMarkup = cards
       .map(
-        (card) => `
+        (card) => {
+          const dataUrl = svgToDataUrl(card.svg);
+          return `
           <figure class="key-card">
-            <img src="${svgToDataUrl(card.svg)}" width="144" height="144" alt="${escapeXml(card.label)}" />
+            <div class="key-sizes">
+              <img src="${dataUrl}" width="144" height="144" alt="${escapeXml(card.label)} (144px)" />
+              <img class="key-72" src="${dataUrl}" width="72" height="72" alt="${escapeXml(card.label)} (72px)" />
+            </div>
             <figcaption>${escapeXml(card.label)}</figcaption>
-          </figure>`,
+          </figure>`;
+        },
       )
       .join("");
 
@@ -135,9 +147,17 @@ export async function generatePreviewHtml(): Promise<string> {
         align-items: center;
         gap: 8px;
       }
+      .key-sizes {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+      }
       .key-card img {
         border-radius: 16px;
         box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+      }
+      .key-card img.key-72 {
+        border-radius: 8px;
       }
       .key-card figcaption {
         font-size: 12px;

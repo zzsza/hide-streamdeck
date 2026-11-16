@@ -182,12 +182,20 @@ const NEEDS_YOU_MANY_AGENTS: readonly AgentRow[] = [
     pane: "w3:p1",
   },
   {
+    id: "fake-agent-hangul-demo",
+    name: "가상작업에이전트-결제모듈테스트담당",
+    kind: "claude",
+    state: "turn",
+    line: "가상 시나리오에서 긴 한국어 안내 문장이 세 줄 안에 깔끔하게 줄바꿈되고 말줄임 처리되는지 확인해 주세요",
+    pane: "w3:p2",
+  },
+  {
     id: "fake-agent-lyra",
     name: "lyra",
     kind: "gemini",
     state: "unread",
     line: "All 18 synthetic checks passed",
-    pane: "w3:p2",
+    pane: "w3:p3",
   },
 ];
 
