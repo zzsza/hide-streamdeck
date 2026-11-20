@@ -72,6 +72,14 @@
       "MinimumVersion": "10"
     }
   ],
+  "Profiles": [
+    {
+      "Name": "profiles/Hide",
+      "DeviceType": 7,
+      "AutoInstall": true,
+      "DontAutoSwitchWhenInstalled": false
+    }
+  ],
   "Nodejs": {
     "Version": "24",
     "Debug": "enabled"

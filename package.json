@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Elgato Stream Deck plugin displaying Hide agent status",
   "scripts": {
-    "build": "rollup -c",
+    "build": "rollup -c && tsx scripts/build-profile.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm run test && npm run build",
