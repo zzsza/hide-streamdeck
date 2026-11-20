@@ -7,6 +7,7 @@ import {
 import { renderCountKey, type CountKeyKind, type DashboardKey } from "../render/count-key.js";
 import { svgToDataUrl } from "../render/key-svg.js";
 import { StatusHub } from "../state/status-hub.js";
+import { openHideOnKeyDown } from "./open-hide.js";
 
 export class CountAction extends SingletonAction {
   override readonly manifestId: string;
@@ -17,6 +18,8 @@ export class CountAction extends SingletonAction {
     super();
     this.manifestId = uuid;
   }
+
+  override onKeyDown = openHideOnKeyDown;
 
   override onWillAppear(ev: WillAppearEvent): void {
     this.subscriptions.get(ev.action.id)?.();
