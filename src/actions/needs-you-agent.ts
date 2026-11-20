@@ -9,6 +9,7 @@ import {
 import { normalizeAgentSlot, renderAgentKey } from "../render/agent-key.js";
 import { svgToDataUrl } from "../render/key-svg.js";
 import { StatusHub } from "../state/status-hub.js";
+import { openHideOnKeyDown } from "./open-hide.js";
 
 export const NEEDS_YOU_AGENT_UUID = "com.zzsza.hide-status.needs-you-agent";
 
@@ -39,6 +40,8 @@ export class NeedsYouAgentAction extends SingletonAction<NeedsYouAgentSettings> 
     super();
     this.hub = hub;
   }
+
+  override onKeyDown = openHideOnKeyDown;
 
   override onWillAppear(ev: WillAppearEvent<NeedsYouAgentSettings>): void {
     this.subscriptions.get(ev.action.id)?.();
