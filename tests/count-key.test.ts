@@ -6,7 +6,7 @@ import { WorkingCountAction } from "../src/actions/working-count.js";
 import {
   connectionHint,
   connectionLabel,
-  COUNT_KEY_COLORS,
+  KEY_COLORS,
   KEY_SIZE,
   renderCountKey,
   renderNeedsYouCountKey,
@@ -66,28 +66,43 @@ function decodeDataUrl(dataUrl: string): string {
 }
 
 describe("renderCountKey", () => {
+  it("uses the Hide dark theme tokens and the concept D red label", () => {
+    expect(KEY_COLORS).toEqual({
+      background: "#0e0f12",
+      card: "#1c1d20",
+      text: "#f3f3f5",
+      muted: "#8b8c90",
+      disabled: "#393a3e",
+      working: "#71a3ff",
+      red: "#ff5c58",
+      redLabel: "#2b0b0a",
+    });
+  });
+
   it("renders Working count key for 0, 1, 12, and 100+ with expected background and text", () => {
     const zeroSvg = renderWorkingCountKey(makeSnapshot({ working: 0, toRead: 3 }));
     expect(zeroSvg).toContain(`width="${KEY_SIZE}" height="${KEY_SIZE}"`);
     expect(zeroSvg).toContain("sans-serif");
-    expect(zeroSvg).toContain(`fill="${COUNT_KEY_COLORS.workingZero.background}"`);
-    expect(zeroSvg).toContain(`fill="${COUNT_KEY_COLORS.workingZero.number}"`);
-    expect(zeroSvg).toContain(">Working</text>");
-    expect(zeroSvg).toContain(">0</text>");
+    expect(zeroSvg).toContain(`fill="${KEY_COLORS.background}"`);
+    expect(zeroSvg).toContain(`fill="${KEY_COLORS.disabled}"`);
+    expect(zeroSvg).toContain('fill="#393a3e">작업 중</text>');
+    expect(zeroSvg).toContain('fill="#393a3e">0</text>');
+    expect(zeroSvg).not.toContain("<circle");
 
     const oneSvg = renderWorkingCountKey(makeSnapshot({ working: 1 }));
-    expect(oneSvg).toContain(`fill="${COUNT_KEY_COLORS.workingActive.background}"`);
-    expect(oneSvg).toContain(`fill="${COUNT_KEY_COLORS.workingActive.number}"`);
-    expect(oneSvg).toContain(">Working</text>");
+    expect(oneSvg).toContain(`fill="${KEY_COLORS.background}"`);
+    expect(oneSvg).toContain(`fill="${KEY_COLORS.text}"`);
+    expect(oneSvg).toContain('fill="#8b8c90">작업 중</text>');
+    expect(oneSvg).toContain('<circle cx="124" cy="28" r="7" fill="#71a3ff"');
     expect(oneSvg).toContain(">1</text>");
 
     const twelveSvg = renderWorkingCountKey(makeSnapshot({ working: 12 }));
-    expect(twelveSvg).toContain(`fill="${COUNT_KEY_COLORS.workingActive.background}"`);
-    expect(twelveSvg).toContain(`fill="${COUNT_KEY_COLORS.workingActive.number}"`);
+    expect(twelveSvg).toContain(`fill="${KEY_COLORS.background}"`);
+    expect(twelveSvg).toContain(`fill="${KEY_COLORS.text}"`);
     expect(twelveSvg).toContain(">12</text>");
 
     const hundredSvg = renderWorkingCountKey(makeSnapshot({ working: 100 }));
-    expect(hundredSvg).toContain(`fill="${COUNT_KEY_COLORS.workingActive.background}"`);
+    expect(hundredSvg).toContain(`fill="${KEY_COLORS.background}"`);
     expect(hundredSvg).toContain(">99+</text>");
     expect(hundredSvg).not.toContain(">100</text>");
   });
@@ -96,24 +111,27 @@ describe("renderCountKey", () => {
     const zeroSvg = renderNeedsYouCountKey(makeSnapshot({ working: 4, needsYou: 0 }));
     expect(zeroSvg).toContain(`width="${KEY_SIZE}" height="${KEY_SIZE}"`);
     expect(zeroSvg).toContain("sans-serif");
-    expect(zeroSvg).toContain(`fill="${COUNT_KEY_COLORS.needsYouZero.background}"`);
-    expect(zeroSvg).toContain(">Needs You</text>");
-    expect(zeroSvg).toContain(">0</text>");
+    expect(zeroSvg).toContain(`fill="${KEY_COLORS.background}"`);
+    expect(zeroSvg).toContain('fill="#393a3e">내 차례</text>');
+    expect(zeroSvg).toContain('fill="#393a3e">0</text>');
+    expect(zeroSvg).not.toContain("<circle");
 
     const oneSvg = renderNeedsYouCountKey(makeSnapshot({ needsYou: 1 }));
-    expect(oneSvg).toContain('fill="#d92d20"');
-    expect(oneSvg).toContain('fill="#ffffff"');
-    expect(oneSvg).toContain(">Needs You</text>");
+    expect(oneSvg).toContain('fill="#ff5c58"');
+    expect(oneSvg).toContain('fill="#0e0f12"');
+    expect(oneSvg).toContain('fill="#2b0b0a">내 차례</text>');
+    expect(oneSvg).toContain('rx="0" fill="#ff5c58"');
+    expect(oneSvg).toContain('fill="#0e0f12">1</text>');
     expect(oneSvg).toContain(">1</text>");
 
     const twelveSvg = renderNeedsYouCountKey(makeSnapshot({ needsYou: 12 }));
-    expect(twelveSvg).toContain('fill="#d92d20"');
-    expect(twelveSvg).toContain('fill="#ffffff"');
+    expect(twelveSvg).toContain('fill="#ff5c58"');
+    expect(twelveSvg).toContain('fill="#0e0f12"');
     expect(twelveSvg).toContain(">12</text>");
 
     const hundredPlusSvg = renderNeedsYouCountKey(makeSnapshot({ needsYou: 105 }));
-    expect(hundredPlusSvg).toContain('fill="#d92d20"');
-    expect(hundredPlusSvg).toContain('fill="#ffffff"');
+    expect(hundredPlusSvg).toContain('fill="#ff5c58"');
+    expect(hundredPlusSvg).toContain('fill="#0e0f12"');
     expect(hundredPlusSvg).toContain(">99+</text>");
     expect(hundredPlusSvg).not.toContain(">105</text>");
   });
@@ -142,20 +160,23 @@ describe("renderCountKey", () => {
       const hint = connectionHint(connection);
 
       if (label === null) {
-        expect(workingSvg).toContain(`fill="${COUNT_KEY_COLORS.workingActive.background}"`);
+        expect(workingSvg).toContain(`fill="${KEY_COLORS.background}"`);
         expect(workingSvg).toContain(">2</text>");
-        expect(needsYouSvg).toContain('fill="#d92d20"');
+        expect(needsYouSvg).toContain('fill="#ff5c58"');
         expect(needsYouSvg).toContain(">1</text>");
         continue;
       }
 
       for (const [svg, title] of [
-        [workingSvg, "Working"],
-        [needsYouSvg, "Needs You"],
+        [workingSvg, "작업 중"],
+        [needsYouSvg, "내 차례"],
       ] as const) {
-        expect(svg).toContain(`fill="${COUNT_KEY_COLORS.disconnected.background}"`);
+        expect(svg).toContain(`fill="${KEY_COLORS.background}"`);
         expect(svg).toContain(`>${title}</text>`);
-        expect(svg).toContain(`>${label}</text>`);
+        const texts = Array.from(svg.matchAll(/<text\b[^>]*>([^<]*)<\/text>/g), (match) => match[1]);
+        const statusLines = texts.slice(1, hint === null ? undefined : -1);
+        expect(statusLines.length).toBeLessThanOrEqual(2);
+        expect(statusLines.join(" ")).toBe(label);
         expect(svg).not.toContain(">2</text>");
         expect(svg).not.toContain(">1</text>");
         expect(svg).not.toContain("synthetic-internal-error-detail");
@@ -233,10 +254,10 @@ describe("WorkingCountAction and NeedsYouCountAction", () => {
     expect(snapshot).not.toBeNull();
     const expected = summarize(snapshot!);
 
-    expect(workingSvg).toContain(">Working</text>");
+    expect(workingSvg).toContain(">작업 중</text>");
     expect(workingSvg).toContain(`>${expected.working}</text>`);
-    expect(needsSvg).toContain('fill="#d92d20"');
-    expect(needsSvg).toContain(">Needs You</text>");
+    expect(needsSvg).toContain('fill="#ff5c58"');
+    expect(needsSvg).toContain(">내 차례</text>");
     expect(needsSvg).toContain(`>${expected.needsYou.length}</text>`);
 
     workingAction.onWillDisappear(workingEvent as never);
@@ -252,12 +273,12 @@ describe("preview output for count keys", () => {
     const svgs = matches.map((match) => decodeURIComponent(match[1]!.slice("data:image/svg+xml;charset=utf8,".length)));
     const workingManySummary = summarize(await new FakeHideSource({ scenario: "working-many" }).read());
 
-    expect(svgs.some((svg) => svg.includes(">Working</text>") && svg.includes(`>${workingManySummary.working}</text>`))).toBe(true);
-    expect(svgs.some((svg) => svg.includes(">Needs You</text>") && svg.includes('fill="#d92d20"'))).toBe(true);
+    expect(svgs.some((svg) => svg.includes(">작업 중</text>") && svg.includes(`>${workingManySummary.working}</text>`))).toBe(true);
+    expect(svgs.some((svg) => svg.includes(">내 차례</text>") && svg.includes('fill="#ff5c58"'))).toBe(true);
     expect(
       svgs.some(
         (svg) =>
-          svg.includes(">Working</text>") &&
+          svg.includes(">작업 중</text>") &&
           svg.includes(">연결 안 됨</text>") &&
           svg.includes(">설정에서 연결 요청</text>"),
       ),
@@ -265,7 +286,7 @@ describe("preview output for count keys", () => {
     expect(
       svgs.some(
         (svg) =>
-          svg.includes(">Needs You</text>") &&
+          svg.includes(">내 차례</text>") &&
           svg.includes(">승인 대기</text>") &&
           !svg.includes(">설정에서 연결 요청</text>"),
       ),
@@ -273,7 +294,7 @@ describe("preview output for count keys", () => {
     expect(
       svgs.some(
         (svg) =>
-          svg.includes(">Working</text>") &&
+          svg.includes(">작업 중</text>") &&
           svg.includes(">연결 끊김</text>") &&
           svg.includes(">설정에서 연결 요청</text>"),
       ),
@@ -281,7 +302,7 @@ describe("preview output for count keys", () => {
     expect(
       svgs.some(
         (svg) =>
-          svg.includes(">Needs You</text>") &&
+          svg.includes(">내 차례</text>") &&
           svg.includes(">거절됨</text>") &&
           svg.includes(">설정에서 연결 요청</text>"),
       ),
@@ -289,7 +310,7 @@ describe("preview output for count keys", () => {
     expect(
       svgs.some(
         (svg) =>
-          svg.includes(">Working</text>") &&
+          svg.includes(">작업 중</text>") &&
           svg.includes(">요청 만료</text>") &&
           svg.includes(">설정에서 연결 요청</text>"),
       ),

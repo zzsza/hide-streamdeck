@@ -149,15 +149,12 @@ export async function generatePreviewHtml(): Promise<string> {
       }
       .key-sizes {
         display: flex;
-        align-items: flex-end;
+        flex-direction: column;
+        align-items: center;
         gap: 10px;
       }
       .key-card img {
-        border-radius: 16px;
         box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
-      }
-      .key-card img.key-72 {
-        border-radius: 8px;
       }
       .key-card figcaption {
         font-size: 12px;
@@ -167,7 +164,7 @@ export async function generatePreviewHtml(): Promise<string> {
   </head>
   <body>
     <h1>Hide Status Key Preview</h1>
-    <p class="lead">Generated across all fake scenarios using the registered key render functions.</p>
+    <p class="lead">Each scenario shows the same keys at 144px (top) and 72px (bottom).</p>
     ${sections.join("\n")}
   </body>
 </html>
