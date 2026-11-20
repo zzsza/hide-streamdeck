@@ -4,6 +4,7 @@ import {
   HIDE_ACCESS_NAME,
   HideAccessStateMachine,
 } from "./hide-access.js";
+import { readMissionDashboard } from "./mission-dashboard.js";
 import { DEFAULT_HIDE_PATH, type HideSnapshot, type HideSource } from "./types.js";
 
 export const DEFAULT_EXEC_TIMEOUT_MS = 5_000;
@@ -236,7 +237,8 @@ export class HideCliSource implements HideSource {
   private readonly readTimeoutMs: number;
   private readonly accessMachine: HideAccessStateMachine;
 
-  private activeAbortController: AbortController | null = null;
+  private readonly activeCommands = new Set<AbortController>();
+  private connected = false;
   private readChain: Promise<void> = Promise.resolve();
   private disposed = false;
 
@@ -277,13 +279,19 @@ export class HideCliSource implements HideSource {
     return nextRead;
   }
 
+  readMissions(signal: AbortSignal) {
+    return readMissionDashboard((args) => {
+      if (!this.connected || signal.aborted) throw createAbortError("Mission poll stopped");
+      return this.runCommand(args, Date.now() + this.timeoutMs, signal);
+    });
+  }
+
   dispose(): void {
     if (this.disposed) {
       return;
     }
     this.disposed = true;
-    this.activeAbortController?.abort(createAbortError("Source has been disposed"));
-    this.activeAbortController = null;
+    for (const command of this.activeCommands) command.abort(createAbortError("Source has been disposed"));
   }
 
   private async performRead(): Promise<HideSnapshot> {
@@ -299,6 +307,7 @@ export class HideCliSource implements HideSource {
     const result = await this.accessMachine.poll((args) =>
       this.runCommand(args, readDeadline),
     );
+    this.connected = result.connection.kind === "connected";
     return {
       connection: result.connection,
       agents: result.agents,
@@ -309,6 +318,7 @@ export class HideCliSource implements HideSource {
   private async runCommand(
     args: readonly string[],
     readDeadline: number,
+    signal?: AbortSignal,
   ): Promise<HideExecResult> {
     if (this.disposed) {
       throw createAbortError("Source has been disposed");
@@ -321,7 +331,9 @@ export class HideCliSource implements HideSource {
     const effectiveTimeoutMs = Math.min(this.timeoutMs, remainingReadMs);
 
     const controller = new AbortController();
-    this.activeAbortController = controller;
+    this.activeCommands.add(controller);
+    const stop = () => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", stop, { once: true });
 
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
@@ -362,9 +374,8 @@ export class HideCliSource implements HideSource {
       if (onAbort !== undefined) {
         controller.signal.removeEventListener("abort", onAbort);
       }
-      if (this.activeAbortController === controller) {
-        this.activeAbortController = null;
-      }
+      signal?.removeEventListener("abort", stop);
+      this.activeCommands.delete(controller);
     }
   }
 }

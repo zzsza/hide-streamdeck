@@ -1,26 +1,30 @@
 # Hide Status Stream Deck Plugin
 
-Elgato Stream Deck plugin (`com.zzsza.hide-status`) that displays Hide coding agent status across count keys and per-slot agent keys.
+Elgato Stream Deck plugin (`com.zzsza.hide-status`) for monitoring Hide agents and missions. The Stream Deck + dashboard uses the following key order. Each UUID starts with `com.zzsza.hide-status.`.
+
+| Row | 1 | 2 | 3 | 4 |
+| --- | --- | --- | --- | --- |
+| Top | 작업 중 (`working-count`) | 내 차례 (`needs-you-count`) | 읽을 것 (`to-read`) | 미션 (`mission`) |
+| Bottom | 머지 대기 (`merge`) | 확인 대기 (`confirmation`) | 경고 (`warning`) | CI 실패 (`ci`) |
+
+The existing `needs-you-agent` action remains available for individual slots.
 
 ## Directory Layout
 
 - `com.zzsza.hide-status.sdPlugin/`: Stream Deck plugin bundle directory
-  - `manifest.json`: SDK v3 manifest (Node.js 24, Stream Deck 7.1+) declaring 3 actions:
-    - `com.zzsza.hide-status.working-count` (Working Count)
-    - `com.zzsza.hide-status.needs-you-count` (Needs You Count)
-    - `com.zzsza.hide-status.needs-you-agent` (Needs You Agent)
+  - `manifest.json`: SDK v3 manifest (Node.js 24, Stream Deck 7.1+) declaring nine actions
   - `ui/count.html`: Shared Property Inspector for count actions
   - `ui/needs-you-agent.html`: Property Inspector for the single-agent slot action
   - `ui/pi-shared.js`, `ui/pi-shared.css`: Property Inspector WebSocket settings sync helper
   - `imgs/`: Plugin, category, and action icons
   - `bin/`: Rollup output (`plugin.js`, gitignored)
 - `src/`
-  - `plugin.ts`: Plugin entry point wiring global settings, shared `StatusHub`, and the 3 actions
+  - `plugin.ts`: Plugin entry point wiring global settings, shared `StatusHub`, and the nine actions
   - `actions/`: `working-count.ts`, `needs-you-count.ts`, `needs-you-agent.ts`
   - `source/`: `types.ts`, `fake-source.ts`, `hide-access.ts`, `hide-cli-source.ts`, `index.ts` (`createHideSource`)
   - `state/`: `classify.ts` (`classify`, `summarize`), `status-hub.ts` (`StatusHub`)
   - `render/`: `key-svg.ts`, `count-key.ts`, `agent-key.ts`
-- `scripts/preview.ts`: Renders every key across all fake scenarios into `preview/index.html` (gitignored)
+- `scripts/preview.ts`: Renders the dashboard across all fake scenarios into `preview/index.html` (gitignored)
 - `tests/`: Vitest unit tests for classification, fake fixtures, polling hub, rendering, and actions
 
 ## Scripts
@@ -31,7 +35,7 @@ Elgato Stream Deck plugin (`com.zzsza.hide-status`) that displays Hide coding ag
 - `npm run check`: Run `typecheck`, `test`, and `build`
 - `npm run validate`: Validate `com.zzsza.hide-status.sdPlugin` with `streamdeck validate`
 - `npm run pack`: Package `.streamDeckPlugin` archive into `dist/` (gitignored)
-- `npm run preview`: Generate `preview/index.html` showing all rendered keys per fake scenario
+- `npm run preview`: Generate `preview/index.html` showing the eight dashboard keys per fake scenario
 
 ## Data Source Interface
 
@@ -45,16 +49,20 @@ export interface AgentRow {
   state: string;
   line: string | null;
   pane: string;
+  parent?: string;
+  parent_pane?: string;
 }
 
 export interface HideSnapshot {
   connection: ConnectionState;
   agents: AgentRow[];
+  missions?: MissionDashboard;
   readAt: number;
 }
 
 export interface HideSource {
   read(): Promise<HideSnapshot>;
+  readMissions?(signal: AbortSignal): Promise<MissionDashboard>;
   dispose?(): void;
 }
 ```
@@ -62,7 +70,8 @@ export interface HideSource {
 - `createHideSource(settings)` selects `HideCliSource` (`source: "hide"`, default) or `FakeHideSource` (`source: "fake"`).
 - `StatusHub` polls the active `HideSource` with a 1500ms delay after each `read()` completes, runs only when at least one visible key is subscribed, immediately delivers the latest cached snapshot to new subscribers, converts `read()` exceptions into `{ kind: "error", message }` snapshots, and swaps sources when global settings change.
 - `classify(state)` maps agent state strings to `needs_you` (`turn`, `look`), `working` (`going`, `waiting`), `to_read` (`done`, `unread`), or `other` (`quiet`, `unknown`, `asleep`, and unknown values).
-- `summarize(snapshot)` deduplicates agents by `id` and preserves input (`pane`) order for `needsYou`.
+- `summarize(snapshot)` deduplicates agents by `id` and preserves input order for `needsYou`. Child agents send their turns to their parent. Only root agents count toward the operator’s Needs You keys.
+- Visible mission keys share a separate 10-second refresh while Hide is connected. A single active mission shows completed nodes over total nodes. Multiple missions show their count. Warnings count each affected node once. CI failures follow the current PR’s CI criterion.
 
 ## Connection States
 

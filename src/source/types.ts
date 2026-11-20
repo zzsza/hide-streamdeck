@@ -1,3 +1,5 @@
+import type { MissionDashboard } from "./mission-dashboard.js";
+
 export type ConnectionState =
   | { kind: "connected" }
   | { kind: "not_connected" }
@@ -8,7 +10,7 @@ export type ConnectionState =
   | { kind: "hide_unavailable" }
   | { kind: "hide_outdated" }
   | { kind: "hide_missing" }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string; refusalCode?: string };
 
 export type ConnectionKind = ConnectionState["kind"];
 
@@ -19,11 +21,14 @@ export interface AgentRow {
   state: string;
   line: string | null;
   pane: string;
+  parent?: string;
+  parent_pane?: string;
 }
 
 export interface HideSnapshot {
   connection: ConnectionState;
   agents: AgentRow[];
+  missions?: MissionDashboard;
   readAt: number;
 }
 
@@ -36,6 +41,7 @@ export interface HideSnapshot {
  */
 export interface HideSource {
   read(): Promise<HideSnapshot>;
+  readMissions?(signal: AbortSignal): Promise<MissionDashboard>;
   /**
    * 사용자가 속성 창에서 연결 요청을 눌렀을 때만 호출됨.
    * 소스는 이때만 새 승인 요청을 보낼 수 있음.

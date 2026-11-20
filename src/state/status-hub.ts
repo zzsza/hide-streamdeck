@@ -42,6 +42,9 @@ export class StatusHub {
   private activeReadGeneration: number | null = null;
   private repollGeneration: number | null = null;
   private disposed = false;
+  private missionSubscribers = 0;
+  private missionPoll: AbortController | null = null;
+  private missionTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: StatusHubOptions = {}) {
     this.intervalMs = options.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -74,13 +77,14 @@ export class StatusHub {
     return this.listeners.size;
   }
 
-  subscribe(listener: StatusListener): () => void {
+  subscribe(listener: StatusListener, includeMissions = false): () => void {
     if (this.disposed) {
       return () => {};
     }
 
     const wasEmpty = this.listeners.size === 0;
     this.listeners.add(listener);
+    if (includeMissions) this.missionSubscribers++;
 
     if (this.lastSnapshot !== null) {
       this.notifySingle(listener, this.lastSnapshot);
@@ -90,6 +94,7 @@ export class StatusHub {
       this.triggerPollNow();
     }
 
+    if (includeMissions && !wasEmpty) this.refreshMissions();
     let active = true;
     return () => {
       if (!active) {
@@ -97,6 +102,10 @@ export class StatusHub {
       }
       active = false;
       this.listeners.delete(listener);
+      if (includeMissions) {
+        this.missionSubscribers--;
+        if (this.missionSubscribers === 0) this.stopMissionPoll();
+      }
       if (this.listeners.size === 0) {
         this.repollGeneration = null;
         this.clearTimer();
@@ -159,6 +168,7 @@ export class StatusHub {
     this.settings = nextSettings;
     this.sourceGeneration += 1;
     this.repollGeneration = null;
+    this.stopMissionPoll();
     this.lastSnapshot = null;
     this.clearTimer();
 
@@ -178,6 +188,7 @@ export class StatusHub {
       return;
     }
     this.disposed = true;
+    this.stopMissionPoll();
     this.ready = false;
     this.sourceGeneration += 1;
     this.activeReadGeneration = null;
@@ -258,6 +269,11 @@ export class StatusHub {
       return;
     }
 
+    if (snapshot.connection.kind !== "connected") {
+      this.stopMissionPoll();
+    } else if (this.missionSubscribers && this.source?.readMissions && this.lastSnapshot?.missions) {
+      snapshot = { ...snapshot, missions: this.lastSnapshot.missions };
+    }
     this.lastSnapshot = snapshot;
 
     if (this.listeners.size === 0) {
@@ -266,6 +282,7 @@ export class StatusHub {
     }
 
     this.broadcast(snapshot);
+    this.refreshMissions();
 
     if (
       this.disposed ||
@@ -292,6 +309,33 @@ export class StatusHub {
       this.timer = null;
       void this.runPoll();
     }, this.intervalMs);
+  }
+
+  private stopMissionPoll(): void {
+    this.missionPoll?.abort();
+    this.missionPoll = null;
+    if (this.missionTimer !== null) clearTimeout(this.missionTimer);
+    this.missionTimer = null;
+  }
+
+  private refreshMissions(): void {
+    if (!this.missionSubscribers || !this.source?.readMissions || this.lastSnapshot?.connection.kind !== "connected"
+      || this.missionPoll || this.missionTimer || this.disposed) return;
+
+    const poll = new AbortController();
+    this.missionPoll = poll;
+    const started = this.now();
+    void this.source.readMissions(poll.signal).catch(() => ({ kind: "error" as const })).then(missions => {
+      if (poll.signal.aborted || !this.lastSnapshot) return;
+      this.lastSnapshot = { ...this.lastSnapshot, missions };
+      this.broadcast(this.lastSnapshot);
+      if (poll.signal.aborted) return;
+      this.missionPoll = null;
+      this.missionTimer = setTimeout(() => {
+        this.missionTimer = null;
+        this.refreshMissions();
+      }, Math.max(0, 10_000 - (this.now() - started)));
+    });
   }
 
   private broadcast(snapshot: HideSnapshot): void {

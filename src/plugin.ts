@@ -1,14 +1,17 @@
 import streamDeck from "@elgato/streamdeck";
 
+import { CountAction } from "./actions/count-action.js";
+import { DASHBOARD_LABELS, type DashboardKey } from "./render/count-key.js";
 import { NeedsYouAgentAction } from "./actions/needs-you-agent.js";
 import { NeedsYouCountAction } from "./actions/needs-you-count.js";
 import { WorkingCountAction } from "./actions/working-count.js";
-import type { ConnectionKind, GlobalSettings } from "./source/types.js";
+import type { ConnectionKind, ConnectionState, GlobalSettings } from "./source/types.js";
 import { StatusHub } from "./state/status-hub.js";
 
 export type PropertyInspectorConnectionMessage = {
   event: "connection";
   kind: ConnectionKind;
+  refusalCode?: string;
 };
 
 export interface PropertyInspectorUi {
@@ -32,14 +35,18 @@ export function wirePropertyInspector(
   hub: StatusHub,
   onError?: (error: unknown) => void,
 ): () => void {
-  const sendConnection = (kind: ConnectionKind): void => {
-    void ui.sendToPropertyInspector({ event: "connection", kind }).catch((error: unknown) => {
+  const sendConnection = (state: ConnectionState): void => {
+    const message: PropertyInspectorConnectionMessage = { event: "connection", kind: state.kind };
+    if (state.kind === "error" && state.refusalCode && /^[a-z][a-z0-9_.-]{0,79}$/i.test(state.refusalCode)) {
+      message.refusalCode = state.refusalCode;
+    }
+    void ui.sendToPropertyInspector(message).catch((error: unknown) => {
       onError?.(error);
     });
   };
 
   const stopSnapshotObserver = hub.onSnapshot((snapshot) => {
-    sendConnection(snapshot.connection.kind);
+    sendConnection(snapshot.connection);
   });
 
   const sendToPluginSub = ui.onSendToPlugin((ev) => {
@@ -65,7 +72,7 @@ export function wirePropertyInspector(
       stopPiHubSubscription = hub.subscribe(() => {});
     }
     if (cachedSnapshot !== null) {
-      sendConnection(cachedSnapshot.connection.kind);
+      sendConnection(cachedSnapshot.connection);
     }
   });
 
@@ -112,6 +119,10 @@ streamDeck.settings.onDidReceiveGlobalSettings<GlobalSettings>((ev) => {
 streamDeck.actions.registerAction(new WorkingCountAction(statusHub));
 streamDeck.actions.registerAction(new NeedsYouCountAction(statusHub));
 streamDeck.actions.registerAction(new NeedsYouAgentAction(statusHub));
+
+for (const kind of Object.keys(DASHBOARD_LABELS) as DashboardKey[]) {
+  streamDeck.actions.registerAction(new CountAction(statusHub, kind, `com.zzsza.hide-status.${kind}`));
+}
 
 async function bootstrap(): Promise<void> {
   await streamDeck.connect();

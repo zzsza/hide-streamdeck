@@ -218,24 +218,28 @@ export function buildStaticScenarioSnapshot(
   switch (scenario) {
     case "empty":
       return {
+        missions: { kind: "ready", count: 0, done: 0, total: 0, merge: 0, confirmation: 0, warning: 0, ci: 0 },
         connection: { kind: "connected" },
         agents: [],
         readAt,
       };
     case "working-many":
       return {
+        missions: { kind: "ready", count: 0, done: 0, total: 0, merge: 0, confirmation: 0, warning: 0, ci: 0 },
         connection: { kind: "connected" },
         agents: cloneAgents(WORKING_MANY_AGENTS),
         readAt,
       };
     case "needs-you-one":
       return {
+        missions: { kind: "ready", count: 2, done: 4, total: 7, merge: 1, confirmation: 0, warning: 0, ci: 0 },
         connection: { kind: "connected" },
         agents: cloneAgents(NEEDS_YOU_ONE_AGENTS),
         readAt,
       };
     case "needs-you-many":
       return {
+        missions: { kind: "ready", count: 1, done: 3, total: 5, merge: 1, confirmation: 2, warning: 2, ci: 1 },
         connection: { kind: "connected" },
         agents: cloneAgents(NEEDS_YOU_MANY_AGENTS),
         readAt,
