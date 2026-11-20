@@ -2,8 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import url from "node:url";
 
-import { renderAgentKey } from "../src/render/agent-key.js";
-import { renderNeedsYouCountKey, renderWorkingCountKey } from "../src/render/count-key.js";
+import { DASHBOARD_LABELS, renderCountKey, type CountKeyKind, type DashboardKey } from "../src/render/count-key.js";
 import { escapeXml, svgToDataUrl } from "../src/render/key-svg.js";
 import { FAKE_SCENARIOS, FakeHideSource } from "../src/source/fake-source.js";
 import { summarize } from "../src/state/classify.js";
@@ -21,18 +20,13 @@ export async function generatePreviewHtml(): Promise<string> {
     const snapshot = await source.read();
     const summary = summarize(snapshot);
 
-    const cards = [
-      { label: "Working Count", svg: renderWorkingCountKey(snapshot) },
-      { label: "Needs You Count", svg: renderNeedsYouCountKey(snapshot) },
-      { label: "Needs You Agent (slot 1)", svg: renderAgentKey(snapshot, { slot: 1 }) },
-      { label: "Needs You Agent (slot 2)", svg: renderAgentKey(snapshot, { slot: 2 }) },
-      ...(scenario.id === "needs-you-many"
-        ? [
-            { label: "Needs You Agent (slot 3)", svg: renderAgentKey(snapshot, { slot: 3 }) },
-            { label: "Needs You Agent (slot 5)", svg: renderAgentKey(snapshot, { slot: 5 }) },
-          ]
-        : []),
+    const layout: (CountKeyKind | DashboardKey)[] = [
+      "working", "needs_you", "to-read", "mission", "merge", "confirmation", "warning", "ci",
     ];
+    const cards = layout.map(kind => ({
+      label: kind === "working" ? "작업 중" : kind === "needs_you" ? "내 차례" : DASHBOARD_LABELS[kind],
+      svg: renderCountKey(kind, snapshot),
+    }));
 
     const cardMarkup = cards
       .map(
@@ -136,8 +130,8 @@ export async function generatePreviewHtml(): Promise<string> {
         color: #f8fafc;
       }
       .key-grid {
-        display: flex;
-        flex-wrap: wrap;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 144px));
         gap: 20px;
       }
       .key-card {
@@ -154,6 +148,8 @@ export async function generatePreviewHtml(): Promise<string> {
         gap: 10px;
       }
       .key-card img {
+        max-width: 100%;
+        height: auto;
         box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
       }
       .key-card figcaption {

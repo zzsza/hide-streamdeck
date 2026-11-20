@@ -51,6 +51,96 @@
           "ShowTitle": false
         }
       ]
+    },
+    {
+      "Name": "읽을 것",
+      "UUID": "com.zzsza.hide-status.to-read",
+      "Icon": "imgs/actions/working-count/icon",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "미션",
+      "UUID": "com.zzsza.hide-status.mission",
+      "Icon": "imgs/actions/working-count/icon",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "머지 대기",
+      "UUID": "com.zzsza.hide-status.merge",
+      "Icon": "imgs/actions/working-count/icon",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "확인 대기",
+      "UUID": "com.zzsza.hide-status.confirmation",
+      "Icon": "imgs/actions/working-count/icon",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "경고",
+      "UUID": "com.zzsza.hide-status.warning",
+      "Icon": "imgs/actions/working-count/icon",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "CI 실패",
+      "UUID": "com.zzsza.hide-status.ci",
+      "Icon": "imgs/actions/working-count/icon",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
     }
   ],
   "Category": "Hide Status",

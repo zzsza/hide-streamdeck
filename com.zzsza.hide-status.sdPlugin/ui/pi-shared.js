@@ -21,6 +21,9 @@
   let websocket = null;
   let inspectorUuid = "";
   let actionUuid = "";
+  let actionContext = "";
+  let refusalCode = "";
+  let requestSent = false;
   let hasLoadedGlobalSettings = false;
   let storedGlobalSettings = {};
   let pendingGlobalPatch = {};
@@ -39,7 +42,7 @@
   function sendToPlugin(payload) {
     const message = {
       event: "sendToPlugin",
-      context: inspectorUuid,
+      context: actionContext || inspectorUuid,
       payload: payload,
     };
     if (actionUuid) {
@@ -62,8 +65,14 @@
   }
 
   function updateConnectionUi() {
-    const label = formatConnectionKind(currentConnectionKind);
-    const disabled = isRequestAccessDisabled(currentConnectionKind);
+    let label = formatConnectionKind(currentConnectionKind);
+    if (requestSent) label = "요청 보냄";
+    else if (currentConnectionKind === "error" && refusalCode) {
+      label = refusalCode === "access_from_pane"
+        ? "Hide pane 안에서 실행됨: Stream Deck 앱을 Hide 밖에서 다시 실행"
+        : refusalCode;
+    }
+    const disabled = !websocket || websocket.readyState !== WebSocket.OPEN || requestSent || isRequestAccessDisabled(currentConnectionKind);
 
     document.querySelectorAll("[data-connection-status]").forEach(function (el) {
       el.textContent = label;
@@ -226,7 +235,11 @@
         if (effectiveGlobalSettings().source !== "hide") {
           return;
         }
-        sendToPlugin({ event: "requestAccess" });
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+          requestSent = true;
+          updateConnectionUi();
+          sendToPlugin({ event: "requestAccess" });
+        }
       });
     });
   }
@@ -267,10 +280,15 @@
     inActionInfo
   ) {
     inspectorUuid = inPropertyInspectorUUID;
+    actionContext = "";
+    currentConnectionKind = null;
+    refusalCode = "";
+    requestSent = false;
     actionUuid = "";
     hasLoadedGlobalSettings = false;
     try {
       const parsedAction = JSON.parse(inActionInfo || "{}");
+      if (parsedAction && typeof parsedAction.context === "string") actionContext = parsedAction.context;
       if (parsedAction && typeof parsedAction.action === "string") {
         actionUuid = parsedAction.action;
       }
@@ -286,6 +304,7 @@
 
     websocket = new WebSocket("ws://127.0.0.1:" + inPort);
     websocket.onopen = function () {
+      updateConnectionUi();
       send({
         event: inRegisterEvent,
         uuid: inPropertyInspectorUUID,
@@ -328,6 +347,8 @@
       } else if (message.event === "sendToPropertyInspector") {
         const payload = message.payload;
         if (payload && payload.event === "connection" && typeof payload.kind === "string") {
+          requestSent = false;
+          refusalCode = typeof payload.refusalCode === "string" ? payload.refusalCode : "";
           currentConnectionKind = payload.kind;
           updateConnectionUi();
         }

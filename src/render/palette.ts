@@ -8,3 +8,6 @@ export const KEY_COLORS = {
   red: "#ff5c58",
   redLabel: "#2b0b0a",
 } as const;
+
+export const SUCCESS_COLOR = "#70e398";
+export const WARNING_COLOR = "#ffb756";

@@ -152,7 +152,7 @@ describe("actions with StatusHub", () => {
 });
 
 describe("manifest and preview generation", () => {
-  it("declares the 3 expected action UUIDs and existing PropertyInspectorPath files", async () => {
+  it("declares the 9 expected action UUIDs and existing PropertyInspectorPath files", async () => {
     const pluginDir = path.resolve(process.cwd(), "com.zzsza.hide-status.sdPlugin");
     const manifestRaw = await fs.readFile(path.join(pluginDir, "manifest.json"), "utf8");
     const manifest = JSON.parse(manifestRaw) as {
@@ -171,6 +171,12 @@ describe("manifest and preview generation", () => {
       WORKING_COUNT_UUID,
       NEEDS_YOU_COUNT_UUID,
       NEEDS_YOU_AGENT_UUID,
+      "com.zzsza.hide-status.to-read",
+      "com.zzsza.hide-status.mission",
+      "com.zzsza.hide-status.merge",
+      "com.zzsza.hide-status.confirmation",
+      "com.zzsza.hide-status.warning",
+      "com.zzsza.hide-status.ci",
     ]);
 
     for (const act of manifest.Actions) {

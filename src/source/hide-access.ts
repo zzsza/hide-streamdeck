@@ -41,7 +41,7 @@ interface ReadContext {
 
 const OUTDATED_PATTERN = /\bunknown command\b/i;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -79,6 +79,7 @@ export function mapRefusalCodeToConnectionState(
       return {
         kind: "error",
         message: formatRefusalErrorMessage(code, message),
+        refusalCode: code,
       };
   }
 }
@@ -97,7 +98,7 @@ function describeInvalidOutput(output: CliOutput, reason: string): string {
   return detail.length > 0 ? `${reason}${codePart}: ${detail}` : `${reason}${codePart}`;
 }
 
-export function parseCliJsonEnvelope(output: CliOutput): CliEnvelope {
+export function parseCliJsonEnvelope(output: CliOutput, valueKey: "value" | "result" = "value"): CliEnvelope {
   const trimmed = output.stdout.trim();
   if (trimmed.length === 0) {
     if (isOutdatedHideOutput(output)) {
@@ -160,7 +161,7 @@ export function parseCliJsonEnvelope(output: CliOutput): CliEnvelope {
         message: `hide returned ok=true with non-zero exit code ${output.exitCode}`,
       };
     }
-    return { kind: "ok", value: parsed.value };
+    return { kind: "ok", value: parsed[valueKey] };
   }
 
   return {
@@ -303,6 +304,8 @@ export function parsePsValue(value: unknown): PsParseResult {
       name,
       kind: rawAgent.kind,
       state: rawAgent.state,
+      ...(typeof rawAgent.parent === "string" && rawAgent.parent && { parent: rawAgent.parent }),
+      ...(typeof rawAgent.parent_pane === "string" && rawAgent.parent_pane && { parent_pane: rawAgent.parent_pane }),
       line,
       pane,
     });

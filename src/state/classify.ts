@@ -40,7 +40,7 @@ export function summarize(snapshot: HideSnapshot): StatusSummary {
     seenIds.add(agent.id);
 
     const mark = classify(agent.state);
-    if (mark === "needs_you") {
+    if (mark === "needs_you" && !agent.parent && !agent.parent_pane) {
       needsYou.push(agent);
     } else if (mark === "working") {
       working += 1;
