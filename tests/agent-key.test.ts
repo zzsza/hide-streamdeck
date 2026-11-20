@@ -9,6 +9,7 @@ import {
 } from "../src/actions/needs-you-agent.js";
 import {
   estimateTextWidth,
+  formatAgentStateLabel,
   normalizeAgentSlot,
   renderAgentKey,
   selectNeedsYouAgent,
@@ -209,7 +210,7 @@ describe("text wrapping and width estimation", () => {
 });
 
 describe("renderAgentKey", () => {
-  it("renders occupied slot with red accent, name, and line", () => {
+  it("renders occupied slot with the red stripe, kind, and name, omitting the description", () => {
     const snap = makeSnapshot([
       makeAgent({
         id: "a1",
@@ -222,15 +223,17 @@ describe("renderAgentKey", () => {
     const svg = renderAgentKey(snap, { slot: 1 });
     expect(svg).toContain(`width="${KEY_SIZE}"`);
     expect(svg).toContain(`height="${KEY_SIZE}"`);
-    expect(svg).toContain("#ef4444");
+    expect(svg).toContain('<rect width="6" height="144" fill="#ff5c58"');
+    expect(svg).toContain('rx="0" fill="#1c1d20"');
 
     const texts = extractTextContents(svg);
     expect(texts).toContain("nova");
-    expect(texts.join(" ")).toContain("Approve schema update?");
+    expect(texts).toContain("claude");
+    expect(svg).not.toContain("Approve");
     expect(texts).toContain("#1");
   });
 
-  it("falls back to Korean state labels when line is null", () => {
+  it("keeps Korean state labels available and omits the description when line is null", () => {
     const snap = makeSnapshot([
       makeAgent({ id: "a1", name: "zephyr", state: "turn", line: null }),
       makeAgent({ id: "a2", name: "orion", state: "look", line: null }),
@@ -238,11 +241,32 @@ describe("renderAgentKey", () => {
 
     const turnTexts = extractTextContents(renderAgentKey(snap, { slot: 1 }));
     expect(turnTexts).toContain("zephyr");
-    expect(turnTexts).toContain("차례");
+    expect(formatAgentStateLabel("turn")).toBe("차례");
+    expect(turnTexts).not.toContain("차례");
 
     const lookTexts = extractTextContents(renderAgentKey(snap, { slot: 2 }));
     expect(lookTexts).toContain("orion");
-    expect(lookTexts).toContain("확인 요청");
+    expect(formatAgentStateLabel("look")).toBe("확인 요청");
+    expect(lookTexts).not.toContain("확인 요청");
+  });
+
+  it("wraps a long name immediately after the hyphen", () => {
+    const snap = makeSnapshot([makeAgent({ id: "a", name: "hyperion-telemetry-pipeline", state: "turn" })]);
+    const [, , first, second] = extractTextContents(renderAgentKey(snap));
+    expect(first).toBe("hyperion-");
+    expect(second).toMatch(/^tele.*…$/);
+  });
+
+  it("ellipsizes a long Korean name within the 16px to 132px area", () => {
+    const snap = makeSnapshot([makeAgent({ id: "a", name: "가상작업에이전트이름이아주길어요", state: "turn" })]);
+    const svg = renderAgentKey(snap);
+    const lines = Array.from(svg.matchAll(/<text x="(\d+)"[^>]*font-size="26"[^>]*>([^<]+)<\/text>/g));
+    expect(lines).toHaveLength(2);
+    expect(lines[1]![2]).toMatch(/…$/);
+    for (const [, x, line] of lines) {
+      expect(Number(x)).toBe(16);
+      expect(Number(x) + estimateTextWidth(line!, 26, true)).toBeLessThanOrEqual(132);
+    }
   });
 
   it("renders a dimmed empty key with only slot number when slot has no agent", () => {
@@ -251,8 +275,9 @@ describe("renderAgentKey", () => {
     ]);
 
     const svg = renderAgentKey(snap, { slot: 3 });
-    expect(svg).not.toContain("#ef4444");
+    expect(svg).not.toContain("#ff5c58");
     expect(svg).not.toContain("nova");
+    expect(svg).toContain('fill="#393a3e">#3</text>');
     expect(extractTextContents(svg)).toEqual(["#3"]);
   });
 
@@ -280,15 +305,19 @@ describe("renderAgentKey", () => {
       const texts = extractTextContents(svg);
       const bodyTexts = texts.filter((t) => t !== "#1");
 
-      expect(svg).not.toContain("#ef4444");
+      expect(svg).not.toContain("#ff5c58");
       expect(svg).not.toContain("Should stay hidden");
       expect(bodyTexts.length).toBeGreaterThan(0);
       expect(bodyTexts.length).toBeLessThanOrEqual(expectedHint !== null ? 4 : 3);
       expect(expectedLabel.length).toBeGreaterThan(0);
-      expect(bodyTexts[0]?.slice(0, 4)).toBe(expectedLabel.slice(0, 4));
+      const statusLines = expectedHint ? bodyTexts.slice(0, -1) : bodyTexts;
+      expect(statusLines.length).toBeLessThanOrEqual(2);
+      expect(statusLines.join(" ")).toBe(expectedLabel);
+      expect(texts).toContain("#1");
+      expect(svg).not.toContain("spawn failed");
       if (expectedHint !== null) {
         expect(bodyTexts.join(" ")).toContain(expectedHint);
-        expect(estimateTextWidth(expectedHint, 11, false)).toBeLessThanOrEqual(116);
+        expect(estimateTextWidth(expectedHint, 13, false)).toBeLessThanOrEqual(116);
       } else {
         expect(bodyTexts.join(" ")).not.toContain("설정에서 연결 요청");
       }
