@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { generatePreviewHtml } from "../scripts/preview.js";
+import { CountAction } from "../src/actions/count-action.js";
 import { NeedsYouCountAction } from "../src/actions/needs-you-count.js";
 import { WorkingCountAction } from "../src/actions/working-count.js";
 import {
@@ -13,6 +14,7 @@ import {
   renderWorkingCountKey,
 } from "../src/render/index.js";
 import { FakeHideSource } from "../src/source/fake-source.js";
+import { parsePsValue } from "../src/source/hide-access.js";
 import type { AgentRow, ConnectionState, HideSnapshot } from "../src/source/types.js";
 import { summarize } from "../src/state/classify.js";
 import { StatusHub } from "../src/state/status-hub.js";
@@ -66,6 +68,63 @@ function decodeDataUrl(dataUrl: string): string {
 }
 
 describe("renderCountKey", () => {
+  it("shows a single running session by its Hide label and labels a waiting fallback", () => {
+    const raw = [
+      { ...makeAgent(1, "waiting"), label: "응답 대기" },
+      { ...makeAgent(2, "going"), label: "배포 점검" },
+      { ...makeAgent(3, "going"), label: "문서 점검" },
+    ];
+    const parsed = parsePsValue({ panes: raw.map(agent => ({ pane: agent.pane, agent })) });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const snapshot = { ...makeSnapshot(), agents: parsed.agents };
+    const card = renderCountKey("working-agent", snapshot);
+    expect(card).toMatch(/font-size="24"[^>]+>작업 중<\/text>/);
+    expect(card).toContain("배포 점검");
+    expect(card).not.toContain("응답 대기");
+    expect(card).not.toContain("문서 점검");
+    expect(renderCountKey("working-agent", { ...snapshot, agents: parsed.agents.slice(0, 1) })).toContain("대기 중");
+    expect(renderCountKey("working-agent", makeSnapshot())).not.toContain("<text");
+    expect(renderWorkingCountKey(snapshot)).toMatch(/font-size="24"[^>]+>작업 중<\/text>/);
+  });
+
+  it("shows distinct working sessions across four bindings and clears unoccupied slots", async () => {
+    const snapshot = {
+      ...makeSnapshot(),
+      agents: [
+        { ...makeAgent(1, "waiting"), label: "배포 대기" },
+        { ...makeAgent(2, "going"), label: "자료 점검" },
+        { ...makeAgent(3, "turn"), label: "승인 요청" },
+        { ...makeAgent(4, "going"), label: "문서 정리" },
+      ],
+    };
+    const hub = new StatusHub({ initialSettings: { source: "fake" }, sourceFactory: () => ({ read: async () => snapshot }) });
+    const action = new CountAction(hub, "working-agent", "com.zzsza.hide-status.working-agent");
+    const bindings = [undefined, 2, 3, 4].map((slot, index) => ({
+      action: { id: String(index), isKey: () => true, setTitle: vi.fn(), setImage: vi.fn<(svg: string) => void>() },
+      payload: { settings: { slot } },
+    }));
+    const image = (index: number) => decodeDataUrl(bindings[index]!.action.setImage.mock.lastCall![0]);
+
+    try {
+      for (const ev of bindings) action.onWillAppear(ev as never);
+      await vi.waitFor(() => {
+        expect(bindings.every(ev => ev.action.setImage.mock.calls.length > 0)).toBe(true);
+      });
+      expect(image(0)).toContain("자료 점검");
+      expect(image(1)).toContain("문서 정리");
+      expect(image(2)).toContain("배포 대기");
+      expect(image(2)).toContain("대기 중");
+      expect(image(3)).not.toContain("<text");
+
+      action.onDidReceiveSettings({ action: bindings[1]!.action, payload: { settings: { slot: 4 } } } as never);
+      expect(image(1)).not.toContain("<text");
+    } finally {
+      for (const ev of bindings) action.onWillDisappear(ev as never);
+      hub.dispose();
+    }
+  });
+
   it("uses the Hide dark theme tokens and the concept D red label", () => {
     expect(KEY_COLORS).toEqual({
       background: "#0e0f12",

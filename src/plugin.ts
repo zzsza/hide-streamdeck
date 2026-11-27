@@ -5,6 +5,7 @@ import { DASHBOARD_LABELS, type DashboardKey } from "./render/count-key.js";
 import { NeedsYouAgentAction } from "./actions/needs-you-agent.js";
 import { NeedsYouCountAction } from "./actions/needs-you-count.js";
 import { WorkingCountAction } from "./actions/working-count.js";
+import { WEEKLY_USAGE_LABELS, WeeklyUsageAction, WeeklyUsagePoll, type UsageProvider } from "./actions/weekly-usage.js";
 import type { ConnectionKind, ConnectionState, GlobalSettings } from "./source/types.js";
 import { StatusHub } from "./state/status-hub.js";
 
@@ -122,6 +123,11 @@ streamDeck.actions.registerAction(new NeedsYouAgentAction(statusHub));
 
 for (const kind of Object.keys(DASHBOARD_LABELS) as DashboardKey[]) {
   streamDeck.actions.registerAction(new CountAction(statusHub, kind, `com.zzsza.hide-status.${kind}`));
+}
+
+const weeklyUsage = new WeeklyUsagePoll();
+for (const provider of Object.keys(WEEKLY_USAGE_LABELS) as UsageProvider[]) {
+  streamDeck.actions.registerAction(new WeeklyUsageAction(provider, weeklyUsage));
 }
 
 async function bootstrap(): Promise<void> {

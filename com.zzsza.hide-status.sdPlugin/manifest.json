@@ -1,7 +1,7 @@
 {
   "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
   "Name": "Hide Status",
-  "Version": "0.1.0.0",
+  "Version": "0.1.4.0",
   "Author": "zzsza",
   "Actions": [
     {
@@ -132,6 +132,92 @@
       "UUID": "com.zzsza.hide-status.ci",
       "Icon": "imgs/actions/working-count/icon",
       "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "답변 필요",
+      "UUID": "com.zzsza.hide-status.reply",
+      "Tooltip": "Shows when a Hide session needs an operator response.",
+      "Icon": "imgs/actions/working-count/icon",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "Claude 주간 잔여",
+      "UUID": "com.zzsza.hide-status.weekly-claude",
+      "Tooltip": "Shows the remaining weekly quota for Claude Code.",
+      "Icon": "imgs/actions/working-count/icon",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "Encoder": { "layout": "layouts/weekly-usage.json" },
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "GPT 주간 잔여",
+      "UUID": "com.zzsza.hide-status.weekly-codex",
+      "Tooltip": "Shows the remaining weekly quota for Codex.",
+      "Icon": "imgs/actions/working-count/icon",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "Encoder": { "layout": "layouts/weekly-usage.json" },
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "Antigravity 주간 잔여",
+      "UUID": "com.zzsza.hide-status.weekly-antigravity",
+      "Tooltip": "Shows the remaining weekly quota for Antigravity.",
+      "Icon": "imgs/actions/working-count/icon",
+      "PropertyInspectorPath": "ui/count.html",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "Encoder": { "layout": "layouts/weekly-usage.json" },
+      "States": [
+        {
+          "Image": "imgs/actions/working-count/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "Name": "작업 중 세션",
+      "UUID": "com.zzsza.hide-status.working-agent",
+      "Tooltip": "Shows the running or waiting Hide session at the configured slot.",
+      "Icon": "imgs/actions/working-count/icon",
+      "PropertyInspectorPath": "ui/needs-you-agent.html",
       "Controllers": [
         "Keypad"
       ],

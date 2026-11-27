@@ -59,15 +59,17 @@ export function formatAgentStateLabel(state: string): string {
   }
 }
 
-function renderOccupiedAgentKey(agent: AgentRow, slot: number): string {
-  const name = agent.name.trim() || agent.id;
+function renderAgentName(name: string): string {
   const nameLines = wrapTextLines(name, { maxWidth: 116, maxLines: 2, fontSize: 26, bold: true });
-  const [kind = ""] = wrapTextLines(agent.kind, { maxWidth: 72, maxLines: 1, fontSize: 16 });
   const nameY = nameLines.length > 1 ? 74 : 88;
   // Bound the rendered advance even when a fallback font has wider glyphs.
-  const names = nameLines.map((line, index) =>
+  return nameLines.map((line, index) =>
     `<text x="16" y="${nameY + index * 32}" fill="${KEY_COLORS.text}" font-size="26" font-weight="700" textLength="${estimateTextWidth(line, 26, true)}" lengthAdjust="spacingAndGlyphs">${escapeXml(line)}</text>`,
   ).join("");
+}
+
+function renderOccupiedAgentKey(agent: AgentRow, slot: number): string {
+  const [kind = ""] = wrapTextLines(agent.kind, { maxWidth: 72, maxLines: 1, fontSize: 16 });
 
   return createKeySvg({
     background: KEY_COLORS.card,
@@ -77,9 +79,32 @@ function renderOccupiedAgentKey(agent: AgentRow, slot: number): string {
       `<g font-family="${KEY_FONT}">`,
       `<text x="16" y="34" fill="${KEY_COLORS.red}" font-size="17" font-weight="800">#${slot}</text>`,
       `<text x="132" y="34" text-anchor="end" fill="${KEY_COLORS.muted}" font-size="16" textLength="${estimateTextWidth(kind, 16)}" lengthAdjust="spacingAndGlyphs">${escapeXml(kind)}</text>`,
-      names,
+      renderAgentName(agent.name.trim() || agent.id),
       "</g>",
     ].join(""),
+  });
+}
+
+export function selectWorkingAgent(snapshot: HideSnapshot, slot?: unknown): AgentRow | null {
+  if (snapshot.connection.kind !== "connected") return null;
+  const running = snapshot.agents.filter(agent => agent.state === "going");
+  const waiting = snapshot.agents.filter(agent => agent.state === "waiting");
+  return [...running, ...waiting][normalizeAgentSlot(slot) - 1] ?? null;
+}
+
+export function renderWorkingAgentKey(snapshot: HideSnapshot, slot?: unknown): string {
+  const status = connectionLabel(snapshot.connection);
+  const agent = selectWorkingAgent(snapshot, slot);
+  if (!agent && (!status || normalizeAgentSlot(slot) !== 1)) {
+    return createKeySvg({ background: KEY_COLORS.background, cornerRadius: 0, body: "" });
+  }
+  const label = agent?.state === "waiting" && !status ? "대기 중" : "작업 중";
+  const name = agent?.label?.trim() || agent?.name.trim() || agent?.id || "";
+  const content = status
+    ? renderConnectionText(status, connectionHint(snapshot.connection))
+    : renderAgentName(name);
+  return createKeySvg({ background: KEY_COLORS.background, cornerRadius: 0, body:
+    `<g font-family="${KEY_FONT}"><text x="16" y="35" fill="${KEY_COLORS.working}" font-size="24" font-weight="700">${label}</text>${content}</g>`,
   });
 }
 

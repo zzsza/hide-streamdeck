@@ -48,7 +48,7 @@ export function renderConnectionText(label: string, hint: string | null): string
     `<text x="72" y="${startY + index * 26}" font-size="${fontSize}" fill="${KEY_COLORS.text}" font-weight="700">${escapeXml(line)}</text>`,
   ).join("");
   const hintNode = hint
-    ? `<text x="72" y="111" font-size="13" fill="${KEY_COLORS.muted}">${escapeXml(hint)}</text>`
+    ? `<text x="72" y="113" font-size="14" fill="${KEY_COLORS.muted}">${escapeXml(hint)}</text>`
     : "";
   return `<g font-family="${KEY_FONT}" text-anchor="middle">${status}${hintNode}</g>`;
 }

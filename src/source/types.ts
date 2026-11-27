@@ -17,6 +17,7 @@ export type ConnectionKind = ConnectionState["kind"];
 export interface AgentRow {
   id: string;
   name: string;
+  label?: string;
   kind: string;
   state: string;
   line: string | null;

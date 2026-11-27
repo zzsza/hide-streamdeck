@@ -5,13 +5,14 @@ export const ACCESS_REQUEST_RETRY_INTERVAL_MS = 3_000;
 export const MAX_PS_CALLS_PER_READ = 2;
 
 export const ACCESS_STATUS_ARGS = ["access", "status", "--json"] as const;
-export const ACCESS_REQUEST_ARGS = [
+const LEGACY_ACCESS_REQUEST_ARGS = [
   "access",
   "request",
   "--name",
   HIDE_ACCESS_NAME,
   "--json",
 ] as const;
+export const ACCESS_REQUEST_ARGS = [...LEGACY_ACCESS_REQUEST_ARGS, "--no-wait"] as const;
 export const PS_ARGS = ["ps", "--json"] as const;
 
 export interface CliOutput {
@@ -67,6 +68,7 @@ export function mapRefusalCodeToConnectionState(
     case "access_refused":
       return { kind: "refused" };
     case "access_revoked":
+    case "access_reapprove":
       return { kind: "revoked" };
     case "access_request_expired":
       return { kind: "expired" };
@@ -302,6 +304,7 @@ export function parsePsValue(value: unknown): PsParseResult {
     agents.push({
       id,
       name,
+      ...(typeof rawAgent.label === "string" && rawAgent.label.trim() && rawAgent.label !== name && { label: rawAgent.label }),
       kind: rawAgent.kind,
       state: rawAgent.state,
       ...(typeof rawAgent.parent === "string" && rawAgent.parent && { parent: rawAgent.parent }),
@@ -346,6 +349,7 @@ interface RunAccessRequestOptions {
 function isEndedRefusalCode(code: string): boolean {
   return (
     code === "access_revoked" ||
+    code === "access_reapprove" ||
     code === "access_refused" ||
     code === "access_request_expired"
   );
@@ -700,7 +704,14 @@ export class HideAccessStateMachine {
     args: readonly string[],
   ): Promise<{ envelope: CliEnvelope } | { connection: ConnectionState }> {
     try {
-      const output = await run(args);
+      let output = await run(args);
+      if (
+        args === ACCESS_REQUEST_ARGS &&
+        output.exitCode !== 0 &&
+        output.stderr.split("\n", 1)[0] === "unknown flag for hide access request: --no-wait"
+      ) {
+        output = await run(LEGACY_ACCESS_REQUEST_ARGS);
+      }
       return { envelope: parseCliJsonEnvelope(output) };
     } catch (error) {
       return { connection: mapExecErrorToConnectionState(error) };

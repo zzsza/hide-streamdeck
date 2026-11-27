@@ -135,7 +135,7 @@ async function waitForPidExit(pid: number, timeoutMs = 2_000): Promise<void> {
   throw new Error(`Timed out waiting for process ${pid} to exit`);
 }
 
-type CoreStanding = "pending" | "approved" | "refused" | "revoked" | "dropped";
+type CoreStanding = "pending" | "approved" | "refused" | "revoked" | "reapprove" | "dropped";
 type FakeAgentEntry = Parameters<typeof makeFakePsPayload>[0][number];
 
 /**
@@ -156,6 +156,8 @@ class FakeHideWorld {
   calls: RecordedCall[] = [];
   private seq = 0;
   private activeId: string | null = null;
+
+  constructor(private readonly supportsNoWait = true) {}
 
   seed(
     kept: "request" | "key" | "unreadable",
@@ -205,6 +207,7 @@ class FakeHideWorld {
   private endedCode(standing: CoreStanding, kept: "request" | "key"): string {
     if (standing === "refused") return "access_refused";
     if (standing === "revoked") return "access_revoked";
+    if (standing === "reapprove") return "access_reapprove";
     return kept === "request" ? "access_request_expired" : "access_revoked";
   }
 
@@ -286,7 +289,15 @@ class FakeHideWorld {
     this.calls.push({ file, args: [...args], opts });
     const cmd = args.join(" ");
     if (cmd === "access status --json") return this.status();
-    if (cmd === "access request --name streamdeck --json") return this.request();
+    if (cmd === "access request --name streamdeck --json --no-wait") {
+      if (this.supportsNoWait) return this.request();
+      return {
+        stdout: "",
+        stderr: "unknown flag for hide access request: --no-wait\nusage:\n  hide access request --name <name> [--json]\n",
+        exitCode: 2,
+      };
+    }
+    if (cmd === "access request --name streamdeck --json" && !this.supportsNoWait) return this.request();
     if (cmd === "ps --json") return this.ps();
     throw new Error(`Unexpected command: ${cmd}`);
   });
@@ -340,7 +351,7 @@ describe("HideCliSource", () => {
     expect(snap3.connection).toEqual({ kind: "pending" });
     expect(world.keyFile?.kept).toBe("request");
     expect(world.calls.slice(2).map((c) => c.args)).toEqual([
-      ["access", "request", "--name", "streamdeck", "--json"],
+      ["access", "request", "--name", "streamdeck", "--json", "--no-wait"],
     ]);
 
     // requestAccess() while pending is ignored; polling at +1500ms is throttled (< 3000ms)
@@ -367,7 +378,7 @@ describe("HideCliSource", () => {
       },
     ]);
     expect(world.calls.slice(callCountBeforeThrottle).map((c) => c.args)).toEqual([
-      ["access", "request", "--name", "streamdeck", "--json"],
+      ["access", "request", "--name", "streamdeck", "--json", "--no-wait"],
       ["ps", "--json"],
     ]);
 
@@ -387,6 +398,40 @@ describe("HideCliSource", () => {
     }
   });
 
+  it("falls back to Hide 1.2.9 request syntax when the CLI rejects --no-wait", async () => {
+    let clock = 1_000;
+    const world = new FakeHideWorld(false);
+    const source = new HideCliSource({ exec: world.exec, now: () => clock });
+
+    source.requestAccess();
+    expect((await source.read()).connection).toEqual({ kind: "pending" });
+    world.approve();
+    clock += ACCESS_REQUEST_RETRY_INTERVAL_MS;
+    expect((await source.read()).connection).toEqual({ kind: "connected" });
+    expect(world.calls.map(call => call.args.join(" "))).toEqual([
+      "access request --name streamdeck --json --no-wait",
+      "access request --name streamdeck --json",
+      "access request --name streamdeck --json --no-wait",
+      "access request --name streamdeck --json",
+      "ps --json",
+    ]);
+  });
+
+  it("waits for an explicit reconnect before replacing a View only key that needs reapproval", async () => {
+    const world = new FakeHideWorld();
+    world.seed("key", "reapprove");
+    const source = new HideCliSource({ exec: world.exec, now: () => 1_000 });
+
+    expect((await source.read()).connection).toEqual({ kind: "revoked" });
+    expect((await source.read()).connection).toEqual({ kind: "revoked" });
+    expect(world.countCommands("access request")).toBe(0);
+
+    source.requestAccess();
+    expect((await source.read()).connection).toEqual({ kind: "pending" });
+    expect(world.keyFile?.kept).toBe("request");
+    expect(world.countCommands("access request")).toBe(2);
+  });
+
   it("promotes .request approved while offline and caps mutual ps/request recursion", async () => {
     const world = new FakeHideWorld();
     world.seed("request", "approved", "offline-approved");
@@ -398,7 +443,7 @@ describe("HideCliSource", () => {
     expect(world.calls.map((c) => c.args.join(" "))).toEqual([
       "access status --json",
       "ps --json",
-      "access request --name streamdeck --json",
+      "access request --name streamdeck --json --no-wait",
       "ps --json",
     ]);
 
@@ -410,7 +455,7 @@ describe("HideCliSource", () => {
       if (cmd === "access status --json") {
         return okJson({ state: "connected" });
       }
-      if (cmd === "access request --name streamdeck --json") {
+      if (cmd === "access request --name streamdeck --json --no-wait") {
         return okJson({ state: "connected" });
       }
       return refusalJson("access_not_connected");
@@ -422,7 +467,7 @@ describe("HideCliSource", () => {
     expect(loopingCalls).toEqual([
       "access status --json",
       "ps --json",
-      "access request --name streamdeck --json",
+      "access request --name streamdeck --json --no-wait",
       "ps --json",
     ]);
   });
@@ -464,8 +509,8 @@ describe("HideCliSource", () => {
     expect(reRequested.connection).toEqual({ kind: "pending" });
     expect(world.keyFile?.kept).toBe("request");
     expect(world.calls.slice(callsBeforeAction).map((c) => c.args)).toEqual([
-      ["access", "request", "--name", "streamdeck", "--json"],
-      ["access", "request", "--name", "streamdeck", "--json"],
+      ["access", "request", "--name", "streamdeck", "--json", "--no-wait"],
+      ["access", "request", "--name", "streamdeck", "--json", "--no-wait"],
     ]);
 
     // If the 2nd access request also refuses/fails (e.g. Hide stops), it stops cleanly without looping

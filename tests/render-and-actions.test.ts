@@ -177,6 +177,11 @@ describe("manifest and preview generation", () => {
       "com.zzsza.hide-status.confirmation",
       "com.zzsza.hide-status.warning",
       "com.zzsza.hide-status.ci",
+      "com.zzsza.hide-status.reply",
+      "com.zzsza.hide-status.weekly-claude",
+      "com.zzsza.hide-status.weekly-codex",
+      "com.zzsza.hide-status.weekly-antigravity",
+      "com.zzsza.hide-status.working-agent",
     ]);
 
     for (const act of manifest.Actions) {

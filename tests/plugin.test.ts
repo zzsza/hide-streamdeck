@@ -171,7 +171,7 @@ describe("plugin Property Inspector event wiring", () => {
     await import("../src/plugin.js");
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(sdkMocks.registeredActions).toHaveLength(9);
+    expect(sdkMocks.registeredActions).toHaveLength(14);
     expect(sdkMocks.sendToPluginListeners.length).toBeGreaterThan(0);
 
     // Open PI on the top-level plugin instance -> polls not-connected fake scenario.

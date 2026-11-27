@@ -1,13 +1,16 @@
 import type { HideSnapshot } from "../source/types.js";
 import { summarize } from "../state/classify.js";
+import { renderWorkingAgentKey } from "./agent-key.js";
 import { connectionHint, connectionLabel, renderConnectionText } from "./connection-label.js";
 import { createKeySvg } from "./key-svg.js";
-import { KEY_FONT } from "./key-text.js";
+import { estimateTextWidth, KEY_FONT } from "./key-text.js";
 import { KEY_COLORS, SUCCESS_COLOR, WARNING_COLOR } from "./palette.js";
 
 export type CountKeyKind = "working" | "needs_you";
 export const DASHBOARD_LABELS = {
   "to-read": "읽을 것",
+  reply: "답변 필요",
+  "working-agent": "작업 중 세션",
   mission: "미션",
   merge: "머지 대기",
   confirmation: "확인 대기",
@@ -22,15 +25,17 @@ const dots: Partial<Record<CountKeyKind | DashboardKey, string>> = {
   warning: WARNING_COLOR, ci: KEY_COLORS.red,
 };
 
-export function renderCountKey(kind: CountKeyKind | DashboardKey, snapshot: HideSnapshot): string {
+export function renderCountKey(kind: CountKeyKind | DashboardKey, snapshot: HideSnapshot, slot?: number): string {
+  if (kind === "working-agent") return renderWorkingAgentKey(snapshot, slot);
   let title: string = labels[kind];
   let status = connectionLabel(snapshot.connection);
   let value = "";
   let count = 0;
   if (status === null) {
-    if (kind === "working" || kind === "needs_you" || kind === "to-read") {
+    if (kind === "working" || kind === "needs_you" || kind === "to-read" || kind === "reply") {
       const summary = summarize(snapshot);
-      count = kind === "working" ? summary.working : kind === "to-read" ? summary.toRead : summary.needsYou.length;
+      count = kind === "working" ? summary.working : kind === "to-read" ? summary.toRead :
+        kind === "reply" ? summary.needsYou.filter(agent => agent.state === "turn").length : summary.needsYou.length;
     } else {
       const data = snapshot.missions;
       if (kind === "mission" && data?.count !== undefined && data.count > 1) {
@@ -45,11 +50,13 @@ export function renderCountKey(kind: CountKeyKind | DashboardKey, snapshot: Hide
     }
   }
 
-  const alert = count > 0 && (kind === "needs_you" || kind === "confirmation");
+  const alert = count > 0 && (kind === "needs_you" || kind === "reply" || kind === "confirmation");
   const dim = status === null && count === 0;
   const labelColor = alert ? KEY_COLORS.redLabel : dim ? KEY_COLORS.disabled : KEY_COLORS.muted;
   const numberColor = alert ? KEY_COLORS.background : dim ? KEY_COLORS.disabled : KEY_COLORS.text;
   const dot = count > 0 && dots[kind] ? `<circle cx="124" cy="28" r="7" fill="${dots[kind]}" />` : "";
+  const labelSize = Math.min(24, Math.floor((24 * (dot ? 97 : 112)) / estimateTextWidth(title, 24, true)));
+  if (kind === "reply" && count === 0) return createKeySvg({ background: KEY_COLORS.background, cornerRadius: 0, body: "" });
   value ||= count > 99 ? "99+" : String(count);
   const fontSize = value.length === 1 ? 72 : value.length === 2 ? 64 : Math.min(54, Math.floor(200 / value.length));
   const content = status === null
@@ -59,7 +66,7 @@ export function renderCountKey(kind: CountKeyKind | DashboardKey, snapshot: Hide
   return createKeySvg({
     background: alert ? KEY_COLORS.red : KEY_COLORS.background,
     cornerRadius: 0,
-    body: `<text x="16" y="34" font-family="${KEY_FONT}" font-size="17" font-weight="700" fill="${labelColor}">${title}</text>` + dot + content,
+    body: `<text x="16" y="35" font-family="${KEY_FONT}" font-size="${labelSize}" font-weight="700" fill="${labelColor}">${title}</text>` + dot + content,
   });
 }
 
